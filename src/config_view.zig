@@ -1,0 +1,447 @@
+const std = @import("std");
+const vaxis = @import("vaxis");
+const Serial = @import("serial.zig");
+const ser_utils = @import("serial");
+const Logger = @import("log.zig");
+
+const vxfw = vaxis.vxfw;
+
+const Allocator = std.mem.Allocator;
+
+pub const DropDown = struct {
+    list: std.ArrayList(vxfw.Text),
+    list_view: vxfw.ListView = .{ .children = .{ .builder = .{ .userdata = undefined, .buildFn = DropDown.widgetBuilder } } },
+    // list_view: vxfw.ListView = .{ .children = .{ .slice = undefined } },
+    is_expanded: bool = false,
+    in_focus: bool = false,
+
+    pub fn deinit(self: *DropDown, allocator: Allocator) void {
+        // for (self.text.items) |text| {
+        //     // allocator.free(text);
+        // }
+        self.list.deinit(allocator);
+    }
+
+    pub fn widget(self: *DropDown) vxfw.Widget {
+        return .{
+            .userdata = self,
+            .eventHandler = DropDown.typeErasedEventHandler,
+            .drawFn = DropDown.typeErasedDrawFn,
+        };
+    }
+
+    fn typeErasedEventHandler(ptr: *anyopaque, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
+        const self: *DropDown = @ptrCast(@alignCast(ptr));
+        return self.handleEvent(ctx, event);
+    }
+
+    pub fn widgetBuilder(ptr: *const anyopaque, idx: usize, _: usize) ?vxfw.Widget {
+        const self: *const DropDown = @ptrCast(@alignCast(ptr));
+        if (idx >= self.list.items.len) return null;
+        // (@import("main.zig").logger.log("{s}", .{self.list.items[idx]})) catch {};
+        return self.list.items[idx].widget();
+    }
+
+    pub fn handleEvent(self: *DropDown, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
+        switch (event) {
+            .focus_in => {
+                self.in_focus = true;
+                ctx.consumeAndRedraw();
+                return;
+            },
+            .focus_out => {
+                self.in_focus = false;
+                ctx.consumeAndRedraw();
+                return;
+            },
+            .key_press => |key| {
+                if (key.matches(vaxis.Key.escape, .{})) {
+                    self.is_expanded = false;
+                    ctx.consumeAndRedraw();
+                    return;
+                }
+
+                if (key.matches(vaxis.Key.enter, .{})) {
+                    self.is_expanded = !self.is_expanded;
+                    ctx.consumeAndRedraw();
+                    return;
+                }
+
+                if (self.is_expanded) {
+                    return self.list_view.handleEvent(ctx, event);
+                }
+            },
+            else => {},
+        }
+
+        return;
+    }
+
+    pub fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
+        const self: *DropDown = @ptrCast(@alignCast(ptr));
+        return self.draw(ctx);
+    }
+
+    pub fn draw(self: *DropDown, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
+        const children = try ctx.arena.alloc(vxfw.SubSurface, 1);
+
+        var width: u16 = 0;
+        for (self.list.items) |item| {
+            width = @max(width, @as(u16, @intCast(item.text.len)));
+        }
+        width += 2;
+        if (self.is_expanded) {
+            children[0] = vxfw.SubSurface{
+                .origin = .{ .row = 0, .col = 0 },
+                .surface = try self.list_view.draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = width, .height = @intCast(self.list.items.len) })),
+            };
+        } else {
+            children[0] = vxfw.SubSurface{
+                .origin = .{ .row = 0, .col = 0 },
+                .surface = try (vxfw.Text{ .text = self.list.items[self.list_view.cursor].text, .style = .{ .reverse = self.in_focus } }).widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = width, .height = 1 })),
+            };
+        }
+
+        return .{
+            .size = children[0].surface.size,
+            .widget = self.widget(),
+            .buffer = &.{},
+            .children = children,
+        };
+    }
+};
+
+pub const ConfigModel = struct {
+    port_dropdown: DropDown,
+    baudrate_dropdown: DropDown,
+    databits_dropdown: DropDown,
+    parity_dropdown: DropDown,
+    stopbits_dropdown: DropDown,
+    input: vxfw.TextField,
+
+    dropdowns: [5]*DropDown = undefined,
+
+    button: vxfw.Button = .{
+        .label = "Open",
+        .onClick = ConfigModel.connectOrDisconnect,
+    },
+
+    index_ser: usize = 0,
+    index_tcp: usize = 0,
+    at_button: bool = true,
+
+    serial: *Serial = undefined,
+    userdata: *anyopaque,
+
+    allocator: Allocator,
+    state: State = .Serial,
+
+    const State = enum {
+        Serial,
+        Ip,
+    };
+
+    pub const size = vxfw.Size{ .width = 20, .height = 10 };
+
+    pub fn deinit(self: *ConfigModel) void {
+        for (self.dropdowns) |item| {
+            item.deinit(self.allocator);
+        }
+    }
+
+    fn connectOrDisconnect(ptr: ?*anyopaque, event: *vxfw.EventContext) anyerror!void {
+        const self: *ConfigModel = @ptrCast(@alignCast(ptr));
+
+        const port = self.port_dropdown.list.items[self.port_dropdown.list_view.cursor];
+
+        const tui: *@import("tui.zig").Tui = @ptrCast(@alignCast(self.userdata));
+
+        try tui.openStream(.{ .ser_cfg = .{
+            .port = port.text,
+            .baudrate = @enumFromInt(try std.fmt.parseInt(u32, self.baudrate_dropdown.list.items[self.baudrate_dropdown.list_view.cursor].text[1..], 10)),
+        } });
+
+        event.consumeAndRedraw();
+        return;
+    }
+
+    pub fn widget(self: *ConfigModel) vxfw.Widget {
+        return .{
+            .userdata = self,
+            .eventHandler = ConfigModel.typeErasedEventHandler,
+            .drawFn = ConfigModel.typeErasedDrawFn,
+        };
+    }
+
+    fn typeErasedEventHandler(ptr: *anyopaque, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
+        const self: *ConfigModel = @ptrCast(@alignCast(ptr));
+        return self.handleEvent(ctx, event);
+    }
+
+    pub fn enumerateSerialPorts(self: *ConfigModel) !void {
+        var com_port_iter = try ser_utils.list();
+        while (try com_port_iter.next()) |com_port| {
+            const tmp = try std.fmt.allocPrint(self.allocator, "{s}", .{com_port.display_name});
+            try self.port_dropdown.list.append(self.allocator, vxfw.Text{ .text = tmp });
+        }
+    }
+
+    pub fn handleEvent(self: *ConfigModel, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
+        switch (event) {
+            .init => {
+                self.dropdowns[0] = &self.port_dropdown;
+                self.dropdowns[1] = &self.baudrate_dropdown;
+                self.dropdowns[2] = &self.databits_dropdown;
+                self.dropdowns[3] = &self.parity_dropdown;
+                self.dropdowns[4] = &self.stopbits_dropdown;
+
+                for (self.dropdowns) |dd| {
+                    dd.list_view.children.builder.userdata = dd;
+                }
+
+                inline for (std.meta.fields(Serial.Baudrates)) |field| {
+                    try self.baudrate_dropdown.list.append(self.allocator, vxfw.Text{ .text = field.name });
+                }
+
+                inline for (std.meta.fields(ser_utils.WordSize)) |field| {
+                    try self.databits_dropdown.list.append(self.allocator, vxfw.Text{ .text = field.name });
+                }
+                self.databits_dropdown.list_view.cursor = @intCast(self.databits_dropdown.list.items.len - 1);
+
+                inline for (std.meta.fields(ser_utils.Parity)) |field| {
+                    try self.parity_dropdown.list.append(self.allocator, vxfw.Text{ .text = field.name });
+                }
+
+                inline for (std.meta.fields(ser_utils.StopBits)) |field| {
+                    try self.stopbits_dropdown.list.append(self.allocator, vxfw.Text{ .text = field.name });
+                }
+
+                self.button.userdata = self;
+                return self.button.handleEvent(ctx, .focus_in);
+            },
+            .key_press => |key| {
+                if (self.state == .Serial) {
+                    if (self.dropdowns[self.index_ser].is_expanded) {
+                        return self.dropdowns[self.index_ser].widget().handleEvent(ctx, event);
+                    }
+
+                    if (self.at_button and key.matches(vaxis.Key.enter, .{})) {
+                        return self.button.handleEvent(ctx, event);
+                    }
+
+                    if (key.matches(vaxis.Key.tab, .{})) {
+                        // serial to udp view
+                        self.state = .Ip;
+                        ctx.consumeAndRedraw();
+                        return;
+                    }
+
+                    if (key.matches('j', .{})) {
+                        if (self.at_button == true) {
+                            self.at_button = false;
+                            try self.button.handleEvent(ctx, .focus_out);
+                            return try self.dropdowns[self.index_ser].handleEvent(ctx, .focus_in);
+                        }
+
+                        const prev_index = self.index_ser;
+                        self.index_ser += if (self.index_ser < self.dropdowns.len - 1) 1 else 0;
+                        try self.dropdowns[prev_index].handleEvent(ctx, .focus_out);
+                        return self.dropdowns[self.index_ser].handleEvent(ctx, .focus_in);
+                    }
+                    if (key.matches('k', .{})) {
+                        const prev_index = self.index_ser;
+                        self.index_ser -= if (self.index_ser > 0) 1 else 0;
+
+                        if (self.index_ser == prev_index) {
+                            self.at_button = true;
+                            try self.button.handleEvent(ctx, .focus_in);
+                            return try self.dropdowns[self.index_ser].handleEvent(ctx, .focus_out);
+                        } else {
+                            try self.dropdowns[prev_index].handleEvent(ctx, .focus_out);
+                            return self.dropdowns[self.index_ser].handleEvent(ctx, .focus_in);
+                        }
+                    }
+
+                    return self.dropdowns[self.index_ser].widget().handleEvent(ctx, event);
+                } else {
+                    // next
+
+                    if (key.matches(vaxis.Key.tab, .{})) {
+                        // serial to udp view
+                        self.state = .Serial;
+                        ctx.consumeAndRedraw();
+                        return;
+                    }
+
+                    if (key.matches('j', .{})) {
+                        self.index_tcp = if (self.index_tcp == 0) 1 else self.index_tcp;
+
+                        try self.button.handleEvent(ctx, .focus_out);
+                        return ctx.consumeAndRedraw();
+                    }
+
+                    if (key.matches('k', .{})) {
+                        self.index_tcp = if (self.index_tcp == 1) 0 else self.index_tcp;
+                        try self.button.handleEvent(ctx, .focus_in);
+                        return ctx.consumeAndRedraw();
+                    }
+
+                    if (self.index_tcp == 0) {
+                        if (key.matches(vaxis.Key.enter, .{})) {
+                            // connect or disconnect
+                        }
+                    } else {
+                        // only accept tcp/udp characters
+                        // if (key.matchesAny("abefghijklmnoqrsvwxyz", .{}) and self.index_tcp == 1) {
+                        // } else {
+                        return self.input.handleEvent(ctx, event);
+                        // }
+                    }
+
+                    return self.dropdowns[self.index_ser].widget().handleEvent(ctx, event);
+                }
+            },
+            else => {},
+        }
+
+        return;
+    }
+
+    pub fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
+        const self: *ConfigModel = @ptrCast(@alignCast(ptr));
+
+        // const border_design: []const vxfw.Border.BorderLabel = &[_]vxfw.Border.BorderLabel{.{
+        //     .text = "Port Configuration",
+        //     .alignment = .top_left,
+        // }};
+
+        if (self.state == .Ip) {
+            return try self.drawIpConfigView(ctx);
+        }
+
+        var height: u16 = 1;
+        var width: u16 = 0;
+
+        var children: std.ArrayList(vxfw.SubSurface) = .empty;
+
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = 0, .col = 5 },
+            .surface = try self.button.widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = 8, .height = 1 })),
+        });
+
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = height, .col = 1 },
+            .surface = try (vxfw.Text{ .text = "PORT: " }).widget().draw(ctx.withConstraints(.{ .width = 0, .height = 1 }, .{ .width = 6, .height = 1 })),
+        });
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = height, .col = 7 },
+            .surface = try self.port_dropdown.widget().draw(ctx),
+        });
+        height += children.items[children.items.len - 1].surface.size.height;
+
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = height, .col = 1 },
+            .surface = try (vxfw.Text{ .text = "BAUD: " }).widget().draw(ctx.withConstraints(.{ .width = 0, .height = 1 }, .{ .width = 6, .height = 1 })),
+        });
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = height, .col = 7 },
+            .surface = try self.baudrate_dropdown.widget().draw(ctx),
+        });
+        height += children.items[children.items.len - 1].surface.size.height;
+
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = height, .col = 1 },
+            .surface = try (vxfw.Text{ .text = "DBIT: " }).widget().draw(ctx.withConstraints(.{ .width = 0, .height = 1 }, .{ .width = 6, .height = 1 })),
+        });
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = height, .col = 7 },
+            .surface = try self.databits_dropdown.widget().draw(ctx),
+        });
+        height += children.items[children.items.len - 1].surface.size.height;
+
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = height, .col = 1 },
+            .surface = try (vxfw.Text{ .text = " PAR: " }).widget().draw(ctx.withConstraints(.{ .width = 0, .height = 1 }, .{ .width = 6, .height = 1 })),
+        });
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = height, .col = 7 },
+            .surface = try self.parity_dropdown.widget().draw(ctx),
+        });
+        height += children.items[children.items.len - 1].surface.size.height;
+
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = height, .col = 1 },
+            .surface = try (vxfw.Text{ .text = "STOP: " }).widget().draw(ctx.withConstraints(.{ .width = 0, .height = 1 }, .{ .width = 6, .height = 1 })),
+        });
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = height, .col = 7 },
+            .surface = try self.stopbits_dropdown.widget().draw(ctx),
+        });
+        height += children.items[children.items.len - 1].surface.size.height;
+
+        for (children.items) |surf| {
+            width = @max(surf.surface.size.width, width);
+        }
+        width += 6;
+        width = @max(width, 18);
+
+        if (self.serial.is_open) {
+            self.button.label = "Close";
+            self.button.style.default = .{ .fg = .{ .index = 2 }, .reverse = true };
+            self.button.style.focus = .{ .fg = .{ .index = 2 }, .reverse = true, .blink = true };
+        } else {
+            self.button.label = "Open";
+            self.button.style.focus = .{ .fg = .{ .index = 1 }, .reverse = true, .blink = true };
+        }
+
+        return .{
+            // .size = children[0].surface.size,
+            .size = .{ .width = ConfigModel.size.width, .height = height },
+            .widget = self.widget(),
+            .buffer = &.{},
+            .children = children.items,
+            // .children = children,
+        };
+    }
+
+    fn drawIpConfigView(self: *ConfigModel, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
+        // var height: u16 = 0;
+        // var width: u16 = 0;
+
+        var children: std.ArrayList(vxfw.SubSurface) = .empty;
+
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = 0, .col = 5 },
+            .surface = try self.button.widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = 8, .height = 1 })),
+        });
+
+        // try children.append(ctx.arena, .{ .origin = .{ .row = 1, .col = 0 } });
+
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = 2, .col = 0 },
+            .surface = try (vxfw.Border{ .child = self.input.widget(), .style = .{
+                .blink = true,
+            } }).widget().draw(ctx.withConstraints(ctx.min, .{ .width = ConfigModel.size.width, .height = ConfigModel.size.height })),
+
+            // try self.input.widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = ctx.max.width.? - 2, .height = 1 })),
+        });
+
+        if (self.serial.is_open) {
+            self.button.label = "Close";
+            self.button.style.default = .{ .fg = .{ .index = 2 }, .reverse = true };
+            self.button.style.focus = .{ .fg = .{ .index = 2 }, .reverse = true, .blink = true };
+        } else {
+            self.button.label = "Open";
+            self.button.style.focus = .{ .fg = .{ .index = 1 }, .reverse = true, .blink = true };
+        }
+
+        return .{
+            // .size = children[0].surface.size,
+            .size = .{ .width = children.items[1].surface.size.width, .height = 10 },
+            .widget = self.widget(),
+            .buffer = &.{},
+            .children = children.items,
+            // .children = children,
+        };
+    }
+};

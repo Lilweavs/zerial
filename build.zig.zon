@@ -1,0 +1,63 @@
+.{
+    // This is the default name used by packages depending on this one. For
+    // example, when a user runs `zig fetch --save <url>`, this field is used
+    // as the key in the `dependencies` table. Although the user can choose a
+    // different name, most users will stick with this provided value.
+    //
+    // It is redundant to include "zig" in this name because it is already
+    // within the Zig package namespace.
+    .name = .tui_serial,
+
+    // This is a [Semantic Version](https://semver.org/).
+    // In a future version of Zig it will be used for package deduplication.
+    .version = "0.0.0",
+    .fingerprint = 0xde9381bf44c804e0,
+    // .dependencies = .{
+    //     .vaxis = .{
+    //         .url = "git+https://github.com/rockorager/libvaxis?ref=zig-0.14.0#b10cf6109d9947b1905dc564cc8195cccf33bb02",
+    //         .hash = "12201ca07266c0ab1b6cf231552c6c7b8fdd9ee78c26ddaf557d0c0c74e7d1e25ab4",
+    //     },
+    // },
+    .dependencies = .{
+        // .vaxis = .{
+        //     .url = "git+https://github.com/reykjalin/libvaxis/tree/add/scrollbars-widget#7ad30a8c355e18b7f9abbe48075970512ce82547",
+        //     .hash = "12201ca07266c0ab1b6cf231552c6c7b8fdd9ee78c26ddaf557d0c0c74e7d1e25ab4",
+        // },
+
+        .serial = .{
+            .url = "git+https://github.com/ZigEmbeddedGroup/serial#fbd7389ff8bbc9fa362aa74081588755b5d028a0",
+            .hash = "serial-0.0.1-PoeRzF60AAAN8Iu0yXTIX-t3DVzsnmN7vWHKM2HA2Zbq",
+        },
+        .vaxis = .{
+            .url = "git+https://github.com/JustinBraben/libvaxis.git#f586b69ae3cdada4ef697eb6612f2e3fb883eae6",
+            .hash = "vaxis-0.5.1-BWNV_O8fCQAeUeVrESVc-2BdXloEXkFqReDJL7Q6XTSZ",
+        },
+    },
+    // This field is optional.
+    // This is currently advisory only; Zig does not yet do anything
+    // with this value.
+    //.minimum_zig_version = "0.11.0",
+
+    // This field is optional.
+    // Each dependency must either provide a `url` and `hash`, or a `path`.
+    // `zig build --fetch` can be used to fetch all dependencies of a package, recursively.
+    // Once all dependencies are fetched, `zig build` no longer requires
+    // internet connectivity.
+
+    // Specifies the set of files and directories that are included in this package.
+    // Only files and directories listed here are included in the `hash` that
+    // is computed for this package. Only files listed here will remain on disk
+    // when using the zig package manager. As a rule of thumb, one should list
+    // files required for compilation plus any license(s).
+    // Paths are relative to the build root. Use the empty string (`""`) to refer to
+    // the build root itself.
+    // A directory listed here means that all files within, recursively, are included.
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        // For example...
+        //"LICENSE",
+        //"README.md",
+    },
+}
