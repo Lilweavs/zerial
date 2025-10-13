@@ -12,6 +12,7 @@ pub const DropDown = struct {
     list: std.ArrayList(vxfw.Text),
     list_view: vxfw.ListView = .{ .children = .{ .builder = .{ .userdata = undefined, .buildFn = DropDown.widgetBuilder } } },
     // list_view: vxfw.ListView = .{ .children = .{ .slice = undefined } },
+    description: ?[]const u8 = null,
     is_expanded: bool = false,
     in_focus: bool = false,
 
@@ -83,31 +84,60 @@ pub const DropDown = struct {
     }
 
     pub fn draw(self: *DropDown, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
-        const children = try ctx.arena.alloc(vxfw.SubSurface, 1);
+        // const children = try ctx.arena.alloc(vxfw.SubSurface, 1);
+        var children: std.ArrayList(vxfw.SubSurface) = .empty;
 
         var width: u16 = 0;
-        for (self.list.items) |item| {
-            width = @max(width, @as(u16, @intCast(item.text.len)));
-        }
-        width += 2;
-        if (self.is_expanded) {
-            children[0] = vxfw.SubSurface{
+        var height: u16 = 1;
+
+        const dropdown_len: u16 = 3;
+
+        if (self.description) |description| {
+            try children.append(ctx.arena, .{
                 .origin = .{ .row = 0, .col = 0 },
-                .surface = try self.list_view.draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = width, .height = @intCast(self.list.items.len) })),
-            };
+                .surface = try (vxfw.Text{ .text = description }).widget().draw(ctx.withConstraints(ctx.min, .{ .width = @intCast(description.len), .height = 1 })),
+            });
+
+            width += @intCast(description.len + dropdown_len);
+
+            if (self.is_expanded) {
+                var max_list_length: u16 = 0;
+                for (self.list.items) |item| {
+                    max_list_length = @max(width, @as(u16, @intCast(item.text.len)));
+                }
+                try children.append(ctx.arena, vxfw.SubSurface{
+                    .origin = .{ .row = 0, .col = width },
+                    .surface = try self.list_view.draw(ctx),
+                });
+                width += children.items[1].surface.size.width;
+                height = @intCast(self.list.items.len);
+            } else {
+                const text_len: u16 = @intCast(self.list.items[self.list_view.cursor].text.len);
+                try children.append(ctx.arena, .{
+                    .origin = .{ .row = 0, .col = width },
+                    .surface = try (vxfw.Text{ .text = self.list.items[self.list_view.cursor].text, .style = .{ .reverse = self.in_focus } }).widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = text_len, .height = 1 })),
+                });
+                width += text_len;
+            }
         } else {
-            children[0] = vxfw.SubSurface{
-                .origin = .{ .row = 0, .col = 0 },
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = 0, .col = 2 },
                 .surface = try (vxfw.Text{ .text = self.list.items[self.list_view.cursor].text, .style = .{ .reverse = self.in_focus } }).widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = width, .height = 1 })),
-            };
+            });
         }
 
-        return .{
-            .size = children[0].surface.size,
-            .widget = self.widget(),
-            .buffer = &.{},
-            .children = children,
-        };
+        const size = vxfw.Size{ .width = width, .height = height };
+        var surf = try vxfw.Surface.initWithChildren(ctx.arena, self.widget(), size, children.items);
+        if (!self.is_expanded and self.description != null) {
+            surf.writeCell(@intCast(self.description.?.len + 1), 0, .{ .char = .{ .grapheme = "▼", .width = 1 }, .style = .{} });
+        }
+        return surf;
+        // return .{
+        //     .size = children[0].surface.size,
+        //     .widget = self.widget(),
+        //     .buffer = &.{},
+        //     .children = children,
+        // };
     }
 };
 
@@ -117,7 +147,9 @@ pub const ConfigModel = struct {
     databits_dropdown: DropDown,
     parity_dropdown: DropDown,
     stopbits_dropdown: DropDown,
+    ip_dropdown: DropDown,
     input: vxfw.TextField,
+    is_ip_valid: bool = false,
 
     dropdowns: [5]*DropDown = undefined,
 
@@ -141,7 +173,7 @@ pub const ConfigModel = struct {
         Ip,
     };
 
-    pub const size = vxfw.Size{ .width = 20, .height = 10 };
+    pub const size = vxfw.Size{ .width = 22, .height = 10 };
 
     pub fn deinit(self: *ConfigModel) void {
         for (self.dropdowns) |item| {
@@ -149,17 +181,33 @@ pub const ConfigModel = struct {
         }
     }
 
-    fn connectOrDisconnect(ptr: ?*anyopaque, event: *vxfw.EventContext) anyerror!void {
+    fn validateIpInput(ptr: ?*anyopaque, event: *vxfw.EventContext, buffer: []const u8) anyerror!void {
+        _ = event;
         const self: *ConfigModel = @ptrCast(@alignCast(ptr));
 
-        const port = self.port_dropdown.list.items[self.port_dropdown.list_view.cursor];
+        _ = std.net.Address.parseIpAndPort(buffer) catch {
+            self.is_ip_valid = false;
+            return;
+        };
+        self.is_ip_valid = true;
+    }
 
+    fn connectOrDisconnect(ptr: ?*anyopaque, event: *vxfw.EventContext) anyerror!void {
+        const self: *ConfigModel = @ptrCast(@alignCast(ptr));
         const tui: *@import("tui.zig").Tui = @ptrCast(@alignCast(self.userdata));
 
-        try tui.openStream(.{ .ser_cfg = .{
-            .port = port.text,
-            .baudrate = @enumFromInt(try std.fmt.parseInt(u32, self.baudrate_dropdown.list.items[self.baudrate_dropdown.list_view.cursor].text[1..], 10)),
-        } });
+        if (self.state == .Serial) {
+            const port = self.port_dropdown.list.items[self.port_dropdown.list_view.cursor];
+
+            try tui.openStream(.{ .ser_cfg = .{
+                .port = port.text,
+                .baudrate = @enumFromInt(try std.fmt.parseInt(u32, self.baudrate_dropdown.list.items[self.baudrate_dropdown.list_view.cursor].text[1..], 10)),
+            } });
+        } else {
+            // const address = try std.net.Address.parseIpAndPort(self.input.buf.buffer);
+
+            // try tui.openStream(.{ .net_cfg = .{ .ip_address = self.input.buf.buffer, .port = 65432 } });
+        }
 
         event.consumeAndRedraw();
         return;
@@ -199,6 +247,14 @@ pub const ConfigModel = struct {
                     dd.list_view.children.builder.userdata = dd;
                 }
 
+                self.port_dropdown.description = "PORT:";
+                self.baudrate_dropdown.description = "BAUD:";
+                self.databits_dropdown.description = "DBIT:";
+                self.parity_dropdown.description = " PAR:";
+                self.stopbits_dropdown.description = "SBIT:";
+
+                self.ip_dropdown.list_view.children.builder.userdata = &self.ip_dropdown;
+
                 inline for (std.meta.fields(Serial.Baudrates)) |field| {
                     try self.baudrate_dropdown.list.append(self.allocator, vxfw.Text{ .text = field.name });
                 }
@@ -215,6 +271,13 @@ pub const ConfigModel = struct {
                 inline for (std.meta.fields(ser_utils.StopBits)) |field| {
                     try self.stopbits_dropdown.list.append(self.allocator, vxfw.Text{ .text = field.name });
                 }
+
+                inline for (std.meta.fields(@import("net_stream.zig").NetMode)) |field| {
+                    try self.ip_dropdown.list.append(self.allocator, vxfw.Text{ .text = field.name });
+                }
+
+                self.input.onChange = ConfigModel.validateIpInput;
+                self.input.userdata = self;
 
                 self.button.userdata = self;
                 return self.button.handleEvent(ctx, .focus_in);
@@ -273,38 +336,58 @@ pub const ConfigModel = struct {
                         return;
                     }
 
-                    if (key.matches('j', .{})) {
-                        self.index_tcp = if (self.index_tcp == 0) 1 else self.index_tcp;
+                    if (self.index_tcp == 1 and self.ip_dropdown.is_expanded) {
+                        return self.ip_dropdown.handleEvent(ctx, event);
+                    }
 
-                        try self.button.handleEvent(ctx, .focus_out);
+                    try self.distributeEvent(ctx, .focus_out);
+
+                    if (key.matches('j', .{})) {
+                        self.index_tcp += if (self.index_tcp == 2) 0 else 1;
+                        try self.distributeEvent(ctx, .focus_in);
                         return ctx.consumeAndRedraw();
                     }
 
                     if (key.matches('k', .{})) {
-                        self.index_tcp = if (self.index_tcp == 1) 0 else self.index_tcp;
-                        try self.button.handleEvent(ctx, .focus_in);
+                        self.index_tcp -= if (self.index_tcp == 0) 0 else 1;
+                        try self.distributeEvent(ctx, .focus_in);
                         return ctx.consumeAndRedraw();
                     }
 
-                    if (self.index_tcp == 0) {
-                        if (key.matches(vaxis.Key.enter, .{})) {
-                            // connect or disconnect
-                        }
-                    } else {
-                        // only accept tcp/udp characters
-                        // if (key.matchesAny("abefghijklmnoqrsvwxyz", .{}) and self.index_tcp == 1) {
-                        // } else {
-                        return self.input.handleEvent(ctx, event);
-                        // }
-                    }
+                    return self.distributeEvent(ctx, event);
 
-                    return self.dropdowns[self.index_ser].widget().handleEvent(ctx, event);
+                    // if (self.index_tcp == 0) {
+                    //     if (key.matches(vaxis.Key.enter, .{})) {
+                    //         // connect or disconnect
+                    //     }
+                    // } else {
+                    // return self.input.handleEvent(ctx, event);
+                    // }
+
+                    // return self.dropdowns[self.index_ser].widget().handleEvent(ctx, event);
                 }
             },
             else => {},
         }
 
         return;
+    }
+
+    fn distributeEvent(self: *ConfigModel, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
+        if (self.state == .Serial) {} else {
+            switch (self.index_tcp) {
+                0 => {
+                    return self.button.handleEvent(ctx, event);
+                },
+                1 => {
+                    return self.ip_dropdown.handleEvent(ctx, event);
+                },
+                2 => {
+                    return self.input.handleEvent(ctx, event);
+                },
+                else => unreachable,
+            }
+        }
     }
 
     pub fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
@@ -331,50 +414,30 @@ pub const ConfigModel = struct {
 
         try children.append(ctx.arena, .{
             .origin = .{ .row = height, .col = 1 },
-            .surface = try (vxfw.Text{ .text = "PORT: " }).widget().draw(ctx.withConstraints(.{ .width = 0, .height = 1 }, .{ .width = 6, .height = 1 })),
-        });
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = 7 },
             .surface = try self.port_dropdown.widget().draw(ctx),
         });
         height += children.items[children.items.len - 1].surface.size.height;
 
         try children.append(ctx.arena, .{
             .origin = .{ .row = height, .col = 1 },
-            .surface = try (vxfw.Text{ .text = "BAUD: " }).widget().draw(ctx.withConstraints(.{ .width = 0, .height = 1 }, .{ .width = 6, .height = 1 })),
-        });
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = 7 },
             .surface = try self.baudrate_dropdown.widget().draw(ctx),
         });
         height += children.items[children.items.len - 1].surface.size.height;
 
         try children.append(ctx.arena, .{
             .origin = .{ .row = height, .col = 1 },
-            .surface = try (vxfw.Text{ .text = "DBIT: " }).widget().draw(ctx.withConstraints(.{ .width = 0, .height = 1 }, .{ .width = 6, .height = 1 })),
-        });
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = 7 },
             .surface = try self.databits_dropdown.widget().draw(ctx),
         });
         height += children.items[children.items.len - 1].surface.size.height;
 
         try children.append(ctx.arena, .{
             .origin = .{ .row = height, .col = 1 },
-            .surface = try (vxfw.Text{ .text = " PAR: " }).widget().draw(ctx.withConstraints(.{ .width = 0, .height = 1 }, .{ .width = 6, .height = 1 })),
-        });
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = 7 },
             .surface = try self.parity_dropdown.widget().draw(ctx),
         });
         height += children.items[children.items.len - 1].surface.size.height;
 
         try children.append(ctx.arena, .{
             .origin = .{ .row = height, .col = 1 },
-            .surface = try (vxfw.Text{ .text = "STOP: " }).widget().draw(ctx.withConstraints(.{ .width = 0, .height = 1 }, .{ .width = 6, .height = 1 })),
-        });
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = 7 },
             .surface = try self.stopbits_dropdown.widget().draw(ctx),
         });
         height += children.items[children.items.len - 1].surface.size.height;
@@ -415,12 +478,16 @@ pub const ConfigModel = struct {
             .surface = try self.button.widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = 8, .height = 1 })),
         });
 
-        // try children.append(ctx.arena, .{ .origin = .{ .row = 1, .col = 0 } });
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = 1, .col = 7 },
+            .surface = try (self.ip_dropdown.widget().draw(ctx.withConstraints(ctx.min, .{ .width = ConfigModel.size.width, .height = ConfigModel.size.height }))),
+        });
 
         try children.append(ctx.arena, .{
-            .origin = .{ .row = 2, .col = 0 },
+            .origin = .{ .row = 1 + children.items[1].surface.size.height, .col = 0 },
             .surface = try (vxfw.Border{ .child = self.input.widget(), .style = .{
-                .blink = true,
+                .blink = if (self.index_tcp == 1) true else false,
+                .fg = if (self.is_ip_valid) .{ .index = 2 } else .{ .index = 1 },
             } }).widget().draw(ctx.withConstraints(ctx.min, .{ .width = ConfigModel.size.width, .height = ConfigModel.size.height })),
 
             // try self.input.widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = ctx.max.width.? - 2, .height = 1 })),
@@ -437,7 +504,7 @@ pub const ConfigModel = struct {
 
         return .{
             // .size = children[0].surface.size,
-            .size = .{ .width = children.items[1].surface.size.width, .height = 10 },
+            .size = .{ .width = children.items[2].surface.size.width, .height = 10 },
             .widget = self.widget(),
             .buffer = &.{},
             .children = children.items,

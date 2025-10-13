@@ -97,6 +97,9 @@ pub fn main() !void {
             .stopbits_dropdown = .{
                 .list = std.ArrayList(vxfw.Text).empty
             },
+            .ip_dropdown= .{
+                .list = std.ArrayList(vxfw.Text).empty
+            },
             .userdata = tui,
             .input = .{
                 .buf = vxfw.TextField.Buffer.init(allocator),

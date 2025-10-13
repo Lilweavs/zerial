@@ -19,7 +19,7 @@ writer: std.net.Stream.Writer = undefined,
 
 is_open: bool = false,
 
-const NetMode = enum {
+pub const NetMode = enum {
     Tcp,
     Udp,
 };
