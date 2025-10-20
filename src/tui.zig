@@ -42,6 +42,12 @@ const StatusLineData = struct {
 const ConfigModel = @import("config_view.zig").ConfigModel;
 const SerialMonitor = @import("serial_monitor.zig").SerialMonitor;
 const SendView = @import("send_view.zig").SendView;
+
+pub const SerialStream = union(enum) {
+    Serial,
+    NetStream,
+};
+
 pub const Tui = struct {
     serial: Serial,
     is_listening: bool = false,
@@ -53,7 +59,6 @@ pub const Tui = struct {
     status_line: StatusLineData = .{},
     refresh: bool = false,
 
-    prev_rows: usize = 0,
     state: ZerialState = .Home,
 
     write_queue: vaxis.Queue([]const u8, 32) = .{},
@@ -92,17 +97,22 @@ pub const Tui = struct {
         switch (event) {
             .init => {
                 try ctx.tick(std.time.ms_per_s / 60, self.widget());
-                try self.serial.init();
-                self.configuration_view.serial = &self.serial;
-                self.configuration_view.button.userdata = self;
+                // try self.serial.init();
+                // self.configuration_view.serial = &self.serial;
+                // self.configuration_view.button.userdata = self;
 
                 ctx.consumeAndRedraw();
-                return self.configuration_view.handleEvent(ctx, event);
+                // return self.configuration_view.handleEvent(ctx, event);
             },
             .key_press => |key| {
                 if (key.matches(vaxis.Key.escape, .{})) {
                     self.state = .Home;
                     return ctx.consumeAndRedraw();
+                }
+
+                if (key.matches('c', .{ .ctrl = true })) {
+                    ctx.quit = true;
+                    return;
                 }
 
                 switch (self.state) {
@@ -118,11 +128,6 @@ pub const Tui = struct {
                 if (key.matches('v', .{})) {
                     self.serial_monitor.view_state = if (self.serial_monitor.view_state == .Ascii) @import("serial_monitor.zig").State.Binary else @import("serial_monitor.zig").State.Ascii;
                     return ctx.consumeAndRedraw();
-                }
-
-                if (key.matches('c', .{ .ctrl = true })) {
-                    ctx.quit = true;
-                    return;
                 }
 
                 if (key.matches(':', .{})) {
@@ -157,55 +162,68 @@ pub const Tui = struct {
 
         const max = ctx.max.size();
 
-        const border = vxfw.Border{ .child = self.serial_monitor.widget() };
+        var children: std.ArrayList(vxfw.SubSurface) = .empty;
 
-        const b1 = vxfw.Border{ .child = self.send_view.widget() };
+        // var width: u16 = 0;
+        // var height: u16 = 0;
 
-        const status_line_text: []const u8 = blk: {
-            if (self.serial.is_open) {
-                break :blk try std.fmt.allocPrint(ctx.arena, "Port: {s}@{d} Bandwidth: {d}bps|{d}%", .{ self.serial.port.?, self.serial.baudrate, self.serial.bps, (self.serial.bps / self.serial.baudrate) });
-            } else {
-                break :blk try std.fmt.allocPrint(ctx.arena, "Port: Disconnected", .{});
-            }
-        };
+        // zig fmt: off
+        try children.append(ctx.arena, .{
+                .origin = .{ .row = 0, .col = 0 },
+                .surface = try (vxfw.Border{
+                    .child = (vxfw.FlexRow{
+                        .children = &.{
+                            vxfw.FlexItem{
+                                .widget = (vxfw.Text{.text = "Port: XXX @ 115200"}).widget(),    
+                                .flex = 0,
+                            },
+                            vxfw.FlexItem{
+                                .widget =  (vxfw.Text{
+                                    .text = try std.fmt.allocPrint(ctx.arena, "Mode: {s}", .{zerialStateToString(self.state)}),
+                                    .style = .{
+                                        .bg = .{
+                                            .index = zerialStateToColor(self.state)
+                                        }
+                                    },
+                                }).widget(),
+                                .flex = 0,
+                            },
+                            vxfw.FlexItem{
+                                .widget = (vxfw.Text{
+                                    .text = "",
+                                }).widget(),
+                                .flex = 1,
+                            }
+                        },
+                    }).widget(),
+                }).draw(ctx.withConstraints(ctx.min, .{ .height = 3, .width = max.width })),
+            },
+        );
 
-        const status_line_surface: vxfw.SubSurface = .{
-            .origin = .{ .row = 0, .col = 0 },
-            .surface = try (vxfw.Border{
-                .child = (vxfw.Text{ .text = status_line_text }).widget(),
-            }).draw(ctx.withConstraints(ctx.min, .{ .height = 3, .width = max.width })),
-        };
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = 3, .col = 0 },
+            .surface = try (vxfw.Border{ .child = self.serial_monitor.widget() }).draw(ctx.withConstraints(ctx.min, .{ .width = max.width, .height = max.height - 3 }))
+        });
+        // zig fmt: on
 
-        const status_mode_text = try std.fmt.allocPrint(ctx.arena, "\n {s}", .{zerialStateToString(self.state)});
-
-        const status_mode_surface: vxfw.SubSurface = .{
-            .origin = .{ .row = 0, .col = status_line_surface.surface.size.width },
-            .surface = try ((vxfw.Text{ .text = status_mode_text, .style = .{ .bg = .{ .index = zerialStateToColor(self.state) } } }).widget()).draw(ctx.withConstraints(.{ .width = @intCast(status_mode_text.len), .height = 3 }, .{})),
-        };
-
-        const send_view_surface: vxfw.SubSurface = .{
-            .origin = .{ .row = status_line_surface.surface.size.height, .col = 0 },
-            .surface = try b1.draw(ctx.withConstraints(ctx.min, .{ .height = 3, .width = max.width })),
-        };
-
-        const data_view_surface: vxfw.SubSurface = .{
-            .origin = .{ .row = send_view_surface.origin.row + send_view_surface.surface.size.height, .col = 0 },
-            .surface = try border.draw(ctx.withConstraints(ctx.min, .{ .width = max.width, .height = max.height - send_view_surface.surface.size.height - status_line_surface.surface.size.height })),
-        };
-
-        var num_surfaces: usize = 4;
-        if (self.state == .Configuration) {
-            num_surfaces = 5;
+        // zig fmt: off
+        if (self.state == .SendView) {
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = 10, .col = max.width / 4 },
+                .surface = try (vxfw.Border{
+                    .child = self.send_view.widget(),
+                    .labels = &[_]vxfw.Border.BorderLabel{.{
+                        .text = "Send View",
+                        .alignment = .top_center,
+                    }},
+                    }).draw(ctx.withConstraints(ctx.min, .{ .height = 3, .width = max.width / 2 }))
+                },
+            );
         }
-
-        const children = try ctx.arena.alloc(vxfw.SubSurface, num_surfaces);
-        children[0] = status_line_surface;
-        children[1] = status_mode_surface;
-        children[2] = send_view_surface;
-        children[3] = data_view_surface;
+        // zig fmt: on
 
         if (self.state == .Configuration) {
-            const configure_view: vxfw.SubSurface = .{
+            try children.append(ctx.arena, .{
                 .origin = .{ .row = (max.height - ConfigModel.size.height) / 2 - 5, .col = (max.width - ConfigModel.size.width) / 2 },
                 // .surface = try self.configuration_view.widget().draw(ctx),
                 .surface = try (vxfw.Border{
@@ -215,15 +233,14 @@ pub const Tui = struct {
                         .alignment = .top_center,
                     }},
                 }).widget().draw(ctx.withConstraints(ctx.min, .{ .width = ConfigModel.size.width, .height = ConfigModel.size.height })),
-            };
-            children[4] = configure_view;
+            });
         }
 
         return .{
             .size = max,
             .widget = self.widget(),
             .buffer = &.{},
-            .children = children,
+            .children = children.items,
         };
     }
 
@@ -265,31 +282,29 @@ pub const Tui = struct {
     pub fn closeStream(self: *Tui) void {
         if (!self.serial.is_open) return;
         self.is_listening = false;
+        self.reader = null;
+        self.writer = null;
         // wait for threads to finish
         std.Thread.sleep(100 * std.time.ns_per_ms);
         self.serial.close();
-
-        // self.reader_thread.?.join();
-        // self.writer_thread.?.join();
     }
 
     fn streamWriterThread(self: *Tui) anyerror!void {
         while (self.is_listening) {
             std.Thread.sleep(1 * std.time.ns_per_ms);
-            const writer = if (self.writer) |w| w else continue;
+            const writer = self.writer orelse continue;
 
             const to_send = self.write_queue.pop();
 
             // transfer ownership to Record
             try self.serial_monitor.append(.{
-                .text = @constCast(to_send),
-                .rxOrTx = .TX,
+                .text = to_send,
                 .time = std.time.milliTimestamp(),
+                .rxOrTx = .TX,
             });
 
             _ = try std.io.Writer.write(writer, to_send);
             try std.io.Writer.flush(writer);
-            // try self.serial.write(to_send);
 
             self.serial_monitor.snap_to_bottom = true;
             self.refresh = true;
@@ -301,7 +316,7 @@ pub const Tui = struct {
 
         while (self.is_listening) {
             std.Thread.sleep(1 * std.time.ns_per_ms);
-            const reader = if (self.reader) |r| r else continue;
+            const reader = self.reader orelse continue;
             if (reader.streamRemaining(&writer.writer)) |bytes_read| {
                 if (bytes_read == 0) continue;
                 (@import("main.zig").logger.log("{s}\n", .{buffer[0..bytes_read]})) catch {};
@@ -312,8 +327,8 @@ pub const Tui = struct {
 
                 while (token.next()) |record| {
                     try self.serial_monitor.append(.{
-                        .time = std.time.milliTimestamp(),
                         .text = try self.serial_monitor.allocator.dupe(u8, record),
+                        .time = std.time.milliTimestamp(),
                         .rxOrTx = .RX,
                     });
                 }
