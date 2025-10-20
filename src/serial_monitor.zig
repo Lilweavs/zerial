@@ -8,7 +8,7 @@ const Allocator = std.mem.Allocator;
 const vxfw = vaxis.vxfw;
 
 pub const Record = struct {
-    text: []u8,
+    text: []const u8,
     time: i64,
     rxOrTx: RxOrTx,
 
