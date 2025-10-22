@@ -102,6 +102,7 @@ pub const Tui = struct {
                 // self.configuration_view.button.userdata = self;
 
                 ctx.consumeAndRedraw();
+                try self.send_view.handleEvent(ctx, .init);
                 // return self.configuration_view.handleEvent(ctx, event);
             },
             .key_press => |key| {
@@ -216,7 +217,7 @@ pub const Tui = struct {
                         .text = "Send View",
                         .alignment = .top_center,
                     }},
-                    }).draw(ctx.withConstraints(ctx.min, .{ .height = 3, .width = max.width / 2 }))
+                    }).draw(ctx.withConstraints(ctx.min, .{ .width = max.width / 2, .height = 10 }))
                 },
             );
         }

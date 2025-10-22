@@ -1,5 +1,6 @@
 const std = @import("std");
 const vaxis = @import("vaxis");
+const DropDown = @import("dropdown.zig").DropDown;
 const Allocator = std.mem.Allocator;
 const vxfw = vaxis.vxfw;
 
@@ -66,6 +67,8 @@ pub const HorizontalLine = struct {
 pub const SendView = struct {
     input: vxfw.TextField,
     history_visible: bool = false,
+    history_list: DropDown,
+    write_queue: *vaxis.Queue([]const u8, 32),
 
     pub fn widget(self: *SendView) vxfw.Widget {
         return .{
@@ -82,20 +85,27 @@ pub const SendView = struct {
 
     pub fn handleEvent(self: *SendView, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
         switch (event) {
+            .init => {
+                self.history_list.list_view.children.builder.userdata = &self.history_list;
+                @import("main.zig").logger.log("Init Dropdown\n", .{}) catch {};
+            },
             .key_press => |key| {
-                defer {
-                    if (key.matches(vaxis.Key.enter, .{})) {
-                        self.input.deleteToStart();
-                    }
-                }
-
                 if (key.matches('h', .{ .ctrl = true })) {
                     self.history_visible = !self.history_visible;
                     return ctx.consumeAndRedraw();
                 }
 
-                // handle special logic for send view before sending data to TextField
-                return self.input.handleEvent(ctx, event);
+                if (self.history_visible) {
+                    return self.history_list.handleEvent(ctx, event);
+                } else {
+                    defer {
+                        if (key.matches(vaxis.Key.enter, .{})) {
+                            self.input.deleteToStart();
+                        }
+                    }
+                    // handle special logic for send view before sending data to TextField
+                    return self.input.handleEvent(ctx, event);
+                }
             },
             else => {},
         }
@@ -104,18 +114,26 @@ pub const SendView = struct {
     }
 
     pub fn onSubmit(ptr: ?*anyopaque, ctx: *vxfw.EventContext, str: []const u8) anyerror!void {
-        const tui: *@import("tui.zig").Tui = @ptrCast(@alignCast(ptr));
+        const self: *SendView = @ptrCast(@alignCast(ptr));
 
-        _ = tui.write_queue.tryPush(try tui.allocator.dupe(u8, str));
+        @import("main.zig").logger.log("\n", .{}) catch {};
+
+        for (self.history_list.list.items) |item| {
+            @import("main.zig").logger.log("{s}", .{item.text}) catch {};
+            if (std.mem.eql(u8, item.text, str)) {
+                break;
+            }
+        } else try self.history_list.list.append(ctx.alloc, .{
+            .text = try ctx.alloc.dupe(u8, str),
+        });
+
+        _ = self.write_queue.tryPush(try ctx.alloc.dupe(u8, str));
 
         return ctx.consumeAndRedraw();
     }
 
     pub fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
         const self: *SendView = @ptrCast(@alignCast(ptr));
-        //  ---------------------
-        // | send: *I**** | CRLF |
-        //  ---------------------
 
         var children: std.ArrayList(vxfw.SubSurface) = .empty;
 
@@ -145,12 +163,16 @@ pub const SendView = struct {
         if (self.history_visible) {
             try children.append(ctx.arena, .{ .origin = .{ .row = 1, .col = 0 }, .surface = try (HorizontalLine{ .label = .{ .text = "History", .alignment = .center } }).widget().draw(ctx.withConstraints(ctx.min, ctx.max)) });
             height = 2;
-        }
 
-        // try children.append(ctx.arena, .{
-        //     .origin = .{ .row = 2, .col = 0 },
-        //     .surface = try (self.ListView{}).widget().draw(ctx),
-        // });
+            self.history_list.is_expanded = true;
+
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = height, .col = 0 },
+                .surface = try self.history_list.widget().draw(ctx.withConstraints(ctx.min, ctx.max)),
+            });
+
+            height += children.items[children.items.len - 1].surface.size.height;
+        }
 
         return .{
             .size = .{ .width = width, .height = height },
