@@ -22,6 +22,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const check_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     // add vaxis dependency to module
     const vaxis = b.dependency("vaxis", .{
         .target = target,
@@ -36,11 +42,22 @@ pub fn build(b: *std.Build) void {
     exe_mod.addImport("vaxis", vaxis.module("vaxis"));
     exe_mod.addImport("serial", serial.module("serial"));
 
+    check_mod.addImport("vaxis", vaxis.module("vaxis"));
+    check_mod.addImport("serial", serial.module("serial"));
+
     //create executable
     const exe = b.addExecutable(.{
         .name = "tui-serial",
         .root_module = exe_mod,
     });
+
+    const exe_check = b.addExecutable(.{
+        .name = "tui-serial",
+        .root_module = exe_mod,
+    });
+
+    const check = b.step("check", "Check if tui-serial compiles");
+    check.dependOn(&exe_check.step);
 
     // This declares intent for the library to be installed into the standard
     // location when the user invokes the "install" step (the default step when
