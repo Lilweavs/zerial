@@ -26,11 +26,11 @@ pub const ConfigModel = struct {
         .onClick = ConfigModel.connectOrDisconnect,
     },
 
+    is_stream_open: bool = false,
     index_ser: usize = 0,
     index_tcp: usize = 0,
     at_button: bool = true,
 
-    serial: *Serial = undefined,
     userdata: *anyopaque,
 
     allocator: Allocator,
@@ -66,6 +66,8 @@ pub const ConfigModel = struct {
 
         if (self.state == .Serial) {
             const port = self.port_dropdown.list.items[self.port_dropdown.list_view.cursor];
+
+            @import("main.zig").logger.log("Serial Port: {s}\n", .{port.text}) catch {};
 
             try tui.openStream(.{ .ser_cfg = .{
                 .port = port.text,
@@ -316,7 +318,7 @@ pub const ConfigModel = struct {
         width += 6;
         width = @max(width, 18);
 
-        if (self.serial.is_open) {
+        if (self.is_stream_open) {
             self.button.label = "Close";
             self.button.style.default = .{ .fg = .{ .index = 2 }, .reverse = true };
             self.button.style.focus = .{ .fg = .{ .index = 2 }, .reverse = true, .blink = true };
@@ -326,19 +328,14 @@ pub const ConfigModel = struct {
         }
 
         return .{
-            // .size = children[0].surface.size,
             .size = .{ .width = ConfigModel.size.width, .height = height },
             .widget = self.widget(),
             .buffer = &.{},
             .children = children.items,
-            // .children = children,
         };
     }
 
     fn drawIpConfigView(self: *ConfigModel, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
-        // var height: u16 = 0;
-        // var width: u16 = 0;
-
         var children: std.ArrayList(vxfw.SubSurface) = .empty;
 
         try children.append(ctx.arena, .{
@@ -352,16 +349,17 @@ pub const ConfigModel = struct {
         });
 
         try children.append(ctx.arena, .{
-            .origin = .{ .row = 1 + children.items[1].surface.size.height, .col = 0 },
+            .origin = .{
+                .row = 1 + children.items[1].surface.size.height,
+                .col = 0,
+            },
             .surface = try (vxfw.Border{ .child = self.input.widget(), .style = .{
                 .blink = if (self.index_tcp == 1) true else false,
                 .fg = if (self.is_ip_valid) .{ .index = 2 } else .{ .index = 1 },
             } }).widget().draw(ctx.withConstraints(ctx.min, .{ .width = ConfigModel.size.width, .height = ConfigModel.size.height })),
-
-            // try self.input.widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = ctx.max.width.? - 2, .height = 1 })),
         });
 
-        if (self.serial.is_open) {
+        if (self.is_stream_open) {
             self.button.label = "Close";
             self.button.style.default = .{ .fg = .{ .index = 2 }, .reverse = true };
             self.button.style.focus = .{ .fg = .{ .index = 2 }, .reverse = true, .blink = true };
@@ -371,12 +369,10 @@ pub const ConfigModel = struct {
         }
 
         return .{
-            // .size = children[0].surface.size,
             .size = .{ .width = children.items[2].surface.size.width, .height = 10 },
             .widget = self.widget(),
             .buffer = &.{},
             .children = children.items,
-            // .children = children,
         };
     }
 };

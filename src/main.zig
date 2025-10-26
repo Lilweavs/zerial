@@ -61,12 +61,9 @@ pub fn main() !void {
     //     try logger.log("{s}\n  {s}\n", .{ port.file_name, port.display_name });
     // }
 
-    // zig fmt: off
     tui.* = .{
         .allocator = allocator,
-        .serial = .{
-            .allocator = allocator,
-        },
+        .serial = .{},
         .send_view = .{
             .input = .{
                 .buf = vxfw.TextField.Buffer.init(allocator),
@@ -75,7 +72,7 @@ pub fn main() !void {
                 .userdata = &tui.send_view,
             },
             .history_list = .{
-                .list = std.ArrayList(vxfw.Text).empty
+                .list = std.ArrayList(vxfw.Text).empty,
             },
             .write_queue = &tui.write_queue,
         },
@@ -86,33 +83,20 @@ pub fn main() !void {
         },
         .configuration_view = .{
             .allocator = allocator,
-            .port_dropdown = .{
-                .list = std.ArrayList(vxfw.Text).empty
-            },
-            .baudrate_dropdown = .{
-                .list = std.ArrayList(vxfw.Text).empty
-            },
-            .databits_dropdown = .{
-                .list = std.ArrayList(vxfw.Text).empty
-            },
-            .parity_dropdown = .{
-                .list = std.ArrayList(vxfw.Text).empty
-            },
-            .stopbits_dropdown = .{
-                .list = std.ArrayList(vxfw.Text).empty
-            },
-            .ip_dropdown= .{
-                .list = std.ArrayList(vxfw.Text).empty
-            },
+            .port_dropdown = .{ .list = std.ArrayList(vxfw.Text).empty },
+            .baudrate_dropdown = .{ .list = std.ArrayList(vxfw.Text).empty },
+            .databits_dropdown = .{ .list = std.ArrayList(vxfw.Text).empty },
+            .parity_dropdown = .{ .list = std.ArrayList(vxfw.Text).empty },
+            .stopbits_dropdown = .{ .list = std.ArrayList(vxfw.Text).empty },
+            .ip_dropdown = .{ .list = std.ArrayList(vxfw.Text).empty },
             .userdata = tui,
             .input = .{
                 .buf = vxfw.TextField.Buffer.init(allocator),
                 .unicode = &app.vx.unicode,
-                .userdata = tui
+                .userdata = tui,
             },
-        }
+        },
     };
-    // zig fmt: on
 
     // all views that are not the default should not be statically allocated
 

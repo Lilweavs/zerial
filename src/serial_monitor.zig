@@ -72,16 +72,47 @@ pub const SerialMonitor = struct {
         }
 
         // check for old binary data
-        if (self.hex_data.getPtrOrNull(self.data.size -| 1)) |tail| {
+        if (self.hex_data.getPtrOrNull(self.hex_data.size -| 1)) |tail| {
             if (record.rxOrTx != tail.rxOrTx) {
-                self.hex_data.append(record);
+                try self.splitRecordHex(record, 32);
             } else {
-                self.hex_data.append(record);
-                // check if we need to append to row
+                const hex = tail.text;
+                if (hex.len < 32) {
+                    const remaining = 32 - hex.len;
+
+                    if (record.text.len >= remaining) {
+                        tail.text = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ hex, record.text[0..remaining] });
+                        try self.splitRecordHex(.{
+                            .rxOrTx = record.rxOrTx,
+                            .text = record.text[remaining..],
+                            .time = record.time,
+                        }, 32);
+                    } else {
+                        tail.text = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ hex, record.text });
+                    }
+                    self.allocator.free(hex);
+                } else {
+                    try self.splitRecordHex(record, 32);
+                }
             }
         } else {
-            self.hex_data.append(record);
+            try self.splitRecordHex(record, 32);
         }
+    }
+
+    fn splitRecordHex(self: *SerialMonitor, record: Record, hex_width: usize) !void {
+        var i: usize = 0;
+        while (i + hex_width < record.text.len) : (i += hex_width) {
+            self.hex_data.append(.{
+                .rxOrTx = record.rxOrTx,
+                .text = try std.fmt.allocPrint(self.allocator, "{s}", .{record.text[i .. i + hex_width]}),
+                .time = record.time,
+            });
+        } else self.hex_data.append(.{
+            .rxOrTx = record.rxOrTx,
+            .text = try std.fmt.allocPrint(self.allocator, "{s}", .{record.text[i..]}),
+            .time = record.time,
+        });
     }
 
     fn typeErasedEventHandler(ptr: *anyopaque, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
@@ -157,9 +188,6 @@ pub const SerialMonitor = struct {
 };
 
 pub const ModelRow = struct {
-    // time: i64,
-
-    // text: []const u8,
     record: Record,
     state: State,
     wrap_lines: bool = true,
@@ -203,25 +231,21 @@ pub const ModelRow = struct {
             },
         };
 
-        // zig fmt: off
         const row = vxfw.FlexRow{
             .children = &.{
                 vxfw.FlexItem{
-                    .widget = (
-                        vxfw.Text{
-                            .text = try std.fmt.allocPrint(ctx.arena, "{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3} >", .{ hours, mins, seconds, @as(usize, @intCast(milliseconds)) }),
-                            .style = .{ .fg = .{ .rgb = .{ 255, 255, 0 } } }
-                        }
-                    ).widget(),
-                    .flex = 0
+                    .widget = (vxfw.Text{
+                        .text = try std.fmt.allocPrint(ctx.arena, "{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3} >", .{ hours, mins, seconds, @as(usize, @intCast(milliseconds)) }),
+                        .style = .{ .fg = .{ .rgb = .{ 255, 255, 0 } } },
+                    }).widget(),
+                    .flex = 0,
                 },
                 vxfw.FlexItem{
                     .widget = content.widget(),
                     .flex = 1,
-                }
+                },
             },
         };
-        // zig fmt: on
 
         // 0: black
         // 1: red

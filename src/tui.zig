@@ -7,7 +7,8 @@ const Allocator = std.mem.Allocator;
 
 const vxfw = vaxis.vxfw;
 
-var buffer: [1024 * 32]u8 = undefined;
+var rx_buffer: [1024 * 32]u8 = undefined;
+var tx_buffer: [1024 * 32]u8 = undefined;
 
 const ZerialState = enum {
     Home,
@@ -48,6 +49,13 @@ pub const SerialStream = union(enum) {
     NetStream,
 };
 
+// pub const Stream = struct {
+//     isOpen: *const fn (stream: *const Stream) void,
+//     getStatus: *const fn (stream: *const Stream) void,
+//     readStreaming: *const fn (r: *std.Io.Reader, dest: []u8) std.Io.Reader.Error!usize,
+//     writeStreaming: *const fn (r: *std.Io.Reader, dest: []u8) std.Io.Reader.Error!usize,
+// };
+
 pub const Tui = struct {
     serial: Serial,
     is_listening: bool = false,
@@ -63,8 +71,8 @@ pub const Tui = struct {
 
     write_queue: vaxis.Queue([]const u8, 32) = .{},
 
-    reader: ?*std.io.Reader = null,
-    writer: ?*std.io.Writer = null,
+    reader: ?*std.Io.Reader = null,
+    writer: ?*std.Io.Writer = null,
 
     reader_thread: ?std.Thread = null,
     writer_thread: ?std.Thread = null,
@@ -97,13 +105,11 @@ pub const Tui = struct {
         switch (event) {
             .init => {
                 try ctx.tick(std.time.ms_per_s / 60, self.widget());
-                // try self.serial.init();
-                // self.configuration_view.serial = &self.serial;
-                // self.configuration_view.button.userdata = self;
+                self.configuration_view.button.userdata = self;
 
                 ctx.consumeAndRedraw();
                 try self.send_view.handleEvent(ctx, .init);
-                // return self.configuration_view.handleEvent(ctx, event);
+                return self.configuration_view.handleEvent(ctx, event);
             },
             .key_press => |key| {
                 if (key.matches(vaxis.Key.escape, .{})) {
@@ -168,23 +174,26 @@ pub const Tui = struct {
         // var width: u16 = 0;
         // var height: u16 = 0;
 
-        // zig fmt: off
-        try children.append(ctx.arena, .{
+        // var stream_status: []const u8 = "";
+
+        try children.append(
+            ctx.arena,
+            .{
                 .origin = .{ .row = 0, .col = 0 },
                 .surface = try (vxfw.Border{
                     .child = (vxfw.FlexRow{
                         .children = &.{
                             vxfw.FlexItem{
-                                .widget = (vxfw.Text{.text = "Port: XXX @ 115200"}).widget(),    
+                                .widget = (vxfw.Text{ .text = "Port: XXX @ 115200" }).widget(),
                                 .flex = 0,
                             },
                             vxfw.FlexItem{
-                                .widget =  (vxfw.Text{
+                                .widget = (vxfw.Text{
                                     .text = try std.fmt.allocPrint(ctx.arena, "Mode: {s}", .{zerialStateToString(self.state)}),
                                     .style = .{
                                         .bg = .{
-                                            .index = zerialStateToColor(self.state)
-                                        }
+                                            .index = zerialStateToColor(self.state),
+                                        },
                                     },
                                 }).widget(),
                                 .flex = 0,
@@ -194,7 +203,7 @@ pub const Tui = struct {
                                     .text = "",
                                 }).widget(),
                                 .flex = 1,
-                            }
+                            },
                         },
                     }).widget(),
                 }).draw(ctx.withConstraints(ctx.min, .{ .height = 3, .width = max.width })),
@@ -202,31 +211,37 @@ pub const Tui = struct {
         );
 
         try children.append(ctx.arena, .{
-            .origin = .{ .row = 3, .col = 0 },
-            .surface = try (vxfw.Border{ .child = self.serial_monitor.widget() }).draw(ctx.withConstraints(ctx.min, .{ .width = max.width, .height = max.height - 3 }))
+            .origin = .{
+                .row = 3,
+                .col = 0,
+            },
+            .surface = try (vxfw.Border{
+                .child = self.serial_monitor.widget(),
+            }).draw(ctx.withConstraints(ctx.min, .{ .width = max.width, .height = max.height - 3 })),
         });
-        // zig fmt: on
 
-        // zig fmt: off
         if (self.state == .SendView) {
-            try children.append(ctx.arena, .{
-                .origin = .{ .row = 10, .col = max.width / 4 },
-                .surface = try (vxfw.Border{
+            try children.append(
+                ctx.arena,
+                .{ .origin = .{
+                    .row = 10,
+                    .col = max.width / 4,
+                }, .surface = try (vxfw.Border{
                     .child = self.send_view.widget(),
                     .labels = &[_]vxfw.Border.BorderLabel{.{
                         .text = "Send View",
                         .alignment = .top_center,
                     }},
-                    }).draw(ctx.withConstraints(ctx.min, .{ .width = max.width / 2, .height = 10 }))
-                },
+                }).draw(ctx.withConstraints(ctx.min, .{ .width = max.width / 2, .height = 10 })) },
             );
         }
-        // zig fmt: on
 
         if (self.state == .Configuration) {
             try children.append(ctx.arena, .{
-                .origin = .{ .row = (max.height - ConfigModel.size.height) / 2 - 5, .col = (max.width - ConfigModel.size.width) / 2 },
-                // .surface = try self.configuration_view.widget().draw(ctx),
+                .origin = .{
+                    .row = (max.height - ConfigModel.size.height) / 2 - 5,
+                    .col = (max.width - ConfigModel.size.width) / 2,
+                },
                 .surface = try (vxfw.Border{
                     .child = self.configuration_view.widget(),
                     .labels = &[_]vxfw.Border.BorderLabel{.{
@@ -261,13 +276,11 @@ pub const Tui = struct {
         switch (config) {
             .ser_cfg => |cfg| {
                 if (self.serial.is_open) return;
-
-                try self.serial.openWithConfiguration(cfg);
+                if (try self.serial.openWithConfiguration(cfg)) return;
+                self.configuration_view.is_stream_open = true;
                 self.is_listening = true;
-                self.reader = &self.serial.reader.?.interface;
-                self.writer = &self.serial.writer.?.interface;
-
-                std.debug.print("{any}\n", .{cfg});
+                self.reader = self.serial.getReaderInterface();
+                self.writer = self.serial.getWriterInterface();
             },
             .net_cfg => |cfg| {
                 std.debug.print("{any}\n", .{cfg});
@@ -283,6 +296,7 @@ pub const Tui = struct {
     pub fn closeStream(self: *Tui) void {
         if (!self.serial.is_open) return;
         self.is_listening = false;
+        self.configuration_view.is_stream_open = false;
         self.reader = null;
         self.writer = null;
         // wait for threads to finish
@@ -313,17 +327,15 @@ pub const Tui = struct {
     }
 
     pub fn streamReaderThread(self: *Tui) !void {
-        var writer = std.io.Writer.Discarding.init(&buffer);
+        var buffer: std.Io.Writer.Discarding = .init(&rx_buffer);
 
         while (self.is_listening) {
             std.Thread.sleep(1 * std.time.ns_per_ms);
-            const reader = self.reader orelse continue;
-            if (reader.streamRemaining(&writer.writer)) |bytes_read| {
+            if (self.reader.?.stream(&buffer.writer, .unlimited)) |bytes_read| {
                 if (bytes_read == 0) continue;
-                (@import("main.zig").logger.log("{s}\n", .{buffer[0..bytes_read]})) catch {};
 
                 var token: NewLineIterator = .{
-                    .buffer = buffer[0..bytes_read],
+                    .buffer = rx_buffer[0..bytes_read],
                 };
 
                 while (token.next()) |record| {
@@ -334,12 +346,11 @@ pub const Tui = struct {
                     });
                 }
 
+                _ = std.Io.Writer.consumeAll(&buffer.writer);
                 self.serial_monitor.snap_to_bottom = true;
                 self.refresh = true;
-
-                _ = std.io.Writer.consumeAll(&writer.writer);
             } else |err| {
-                std.debug.print("{t}", .{err});
+                (@import("main.zig").logger.log("Error: {t}\n", .{err})) catch {};
             }
         }
     }

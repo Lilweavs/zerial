@@ -3,15 +3,8 @@ const builtin = @import("builtin");
 const net = std.net;
 
 const NetStream = @This();
-const Allocator = std.mem.Allocator;
 
 mutex: std.Thread.Mutex = .{},
-allocator: Allocator,
-
-rx_buffer: [4096]u8 = undefined,
-tx_buffer: [4096]u8 = undefined,
-
-bps: usize = 0,
 
 stream: std.net.Stream = undefined,
 reader: std.net.Stream.Reader = undefined,
@@ -38,8 +31,8 @@ pub fn connect(nw: *NetStream, ip_address: []const u8, port: u16, mode: NetMode)
     }
 
     try std.posix.connect(nw.socket, &addr.any, addr.getOsSockLen());
-    nw.reader = nw.stream.reader(nw.rx_buffer);
-    nw.writer = nw.stream.writer(nw.tx_buffer);
+    nw.reader = nw.stream.reader(&.{});
+    nw.writer = nw.stream.writer(&.{});
     nw.is_open = true;
 }
 

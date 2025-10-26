@@ -3,34 +3,18 @@ const builtin = @import("builtin");
 const utils = @import("serial");
 const File = std.fs.File;
 const Serial = @This();
-const Allocator = std.mem.Allocator;
 
 file: ?File = null,
 is_open: bool = false,
 mutex: std.Thread.Mutex = .{},
-allocator: Allocator,
 
 reader: ?File.Reader = null,
 writer: ?File.Writer = null,
 
-rx_buffer: [4096]u8 = undefined,
-tx_buffer: [4096]u8 = undefined,
-
-bps: usize = 0,
-
 config: Options = .{},
-baudrate: u32 = 115200,
-port: ?[]const u8 = null,
+port_buffer: [256]u8 = undefined,
 
-pub fn init(self: *Serial) !void {
-    _ = self;
-}
-
-pub fn open(self: *Serial, port: []const u8, baudrate: u32) anyerror!void {
-    return try self.openWithConfiguration(port, .{
-        .baudrate = @enumFromInt(baudrate),
-    });
-}
+error_code: ?anyerror = null,
 
 pub const Baudrates = enum(u32) {
     b115200 = 115200,
@@ -51,39 +35,36 @@ pub const Options = struct {
     stopbits: utils.StopBits = .one,
 };
 
-pub fn openWithConfiguration(self: *Serial, opts: Options) anyerror!void {
-    self.config = opts;
+pub fn getReaderInterface(self: *Serial) ?*std.Io.Reader {
+    return if (self.reader) |*reader| &reader.interface else null;
+}
+
+pub fn getWriterInterface(self: *Serial) ?*std.Io.Writer {
+    return if (self.writer) |*writer| &writer.interface else null;
+}
+
+pub fn openWithConfiguration(self: *Serial, opts: Options) !bool {
     if (self.is_open) {
         self.close();
     }
 
-    if (builtin.os.tag == .windows) {
-        const full_port_name = try std.fmt.allocPrint(self.allocator, "\\\\.\\{s}", .{opts.port});
-        defer self.allocator.free(full_port_name);
-        self.file = try std.fs.cwd().openFile(full_port_name, .{ .mode = .read_write });
-    } else {
-        self.file = try std.fs.cwd().openFile(opts.port, .{ .mode = .read_write });
-    }
+    var cfg = opts;
 
-    try utils.configureSerialPort(self.file.?, .{ .baud_rate = @intFromEnum(opts.baudrate), .parity = opts.parity, .stop_bits = opts.stopbits, .word_size = opts.wordsize });
+    cfg.port = try std.fmt.bufPrint(&self.port_buffer, if (builtin.os.tag == .windows) "\\\\.\\{s}" else "{s}", .{cfg.port});
 
-    self.baudrate = @intFromEnum(opts.baudrate);
+    self.file = std.fs.cwd().openFile(cfg.port, .{ .mode = .read_write }) catch |err| {
+        self.error_code = err;
+        return true;
+    };
 
-    // free port memory before assigning new port name
-    if (self.port) |port_name| {
-        self.allocator.free(port_name);
-    }
-    self.port = try self.allocator.dupe(u8, opts.port);
+    utils.configureSerialPort(self.file.?, .{ .baud_rate = @intFromEnum(cfg.baudrate), .parity = cfg.parity, .stop_bits = cfg.stopbits, .word_size = cfg.wordsize }) catch {
+        self.error_code = error.CannotConfigureSerialPort;
+        self.close();
+        return true;
+    };
 
     if (builtin.os.tag == .windows) {
         var timeouts: COMMTIMEOUTS = undefined;
-        // var timeouts = COMMTIMEOUTS{
-        //     .read_interval_timeout = 1,
-        //     .read_total_timeout_multiplier = 1,
-        //     .read_total_timeout_constant = 1,
-        //     .write_total_timeout_multiplier = 1,
-        //     .write_total_timeout_constant = 10,
-        // };
         if (GetCommTimeouts(self.file.?.handle, &timeouts) == 0) {
             @import("main.zig").logger.log("GetLastError: {d}\n", .{std.os.windows.kernel32.GetLastError()}) catch {};
         } else {
@@ -103,10 +84,12 @@ pub fn openWithConfiguration(self: *Serial, opts: Options) anyerror!void {
         }
     }
 
-    self.reader = self.file.?.readerStreaming(&self.rx_buffer);
-    self.writer = self.file.?.writerStreaming(&self.tx_buffer);
-
+    self.config = cfg;
+    self.reader = self.file.?.readerStreaming(&.{});
+    self.writer = self.file.?.writerStreaming(&.{});
     self.is_open = true;
+    self.error_code = null;
+    return false;
 }
 
 const COMMTIMEOUTS = extern struct {
@@ -127,9 +110,6 @@ pub fn setPortTimeout(port: std.fs.File, readTimeout: u32, writeTimeout: u32) !v
 
 pub fn deinit(self: *Serial) void {
     self.close();
-    if (self.port) |port_name| {
-        self.allocator.free(port_name);
-    }
 }
 
 pub fn close(self: *Serial) void {
@@ -139,75 +119,3 @@ pub fn close(self: *Serial) void {
     }
     self.is_open = false;
 }
-
-pub fn readToBuffer(self: *Serial, buffer: []u8) anyerror!usize {
-    var bytes_read: usize = 0;
-    if (self.reader) |*reader| {
-        // self.mutex.lock();
-        // defer self.mutex.unlock();
-
-        // while (bytes_read < buffer.len) {
-        bytes_read += try reader.read(buffer);
-        // @import("main.zig").logger.log("Bytes Read: {d}\n", .{bytes_read}) catch {};
-
-        // if (file.reader().readByte()) |byte| {
-        // buffer[bytes_read] = byte;
-        // } else |_| {
-        // break;
-        // }
-    }
-    return bytes_read;
-}
-
-// fn read(self: *Serial) anyerror!usize {
-//     if (self.file) |file| {
-//         if (file.reader().readByte()) |byte| {
-//             self.mutex.lock();
-//             defer self.mutex.unlock();
-//             self.buffer[self.len] = byte;
-//             self.len += 1;
-//             return 1;
-//         } else |_| {
-//             // std.debug.print("Error reading from serial port: {any}", .{err});
-//         }
-//     }
-//     return 0;
-// }
-
-pub fn write(self: *Serial, to_send: []const u8) anyerror!void {
-    self.mutex.lock();
-    defer self.mutex.unlock();
-    _ = try self.file.?.write(to_send);
-}
-
-pub fn copyBytesDiscard(self: *Serial, buffer: []u8) usize {
-    self.mutex.lock();
-    defer self.mutex.unlock();
-
-    if (self.buffer.len == 0) return 0;
-
-    const bytes_copied = self.len;
-
-    @memcpy(buffer[0..self.len], self.buffer[0..self.len]);
-    self.len = 0;
-
-    return bytes_copied;
-}
-
-// fn readerThread(self: *Serial) anyerror!void {
-//     var prev_time = std.time.milliTimestamp();
-//     var bytes_sent: usize = 0;
-//     while (self.is_open) {
-//         // if (self.file.?.metadata()) |metadata| {
-//         //     const size = metadata.size();
-//         //     std.debug.print("Bytes: {d}\n", .{size});
-//         // } else |_| {}
-//         bytes_sent += try self.read();
-
-//         if (std.time.milliTimestamp() - prev_time > std.time.ms_per_s * 1) {
-//             self.bps = bytes_sent * 10;
-//             prev_time = std.time.milliTimestamp();
-//             bytes_sent = 0;
-//         }
-//     }
-// }
