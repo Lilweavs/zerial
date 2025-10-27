@@ -16,7 +16,9 @@ pub const ConfigModel = struct {
     parity_dropdown: DropDown,
     stopbits_dropdown: DropDown,
     ip_dropdown: DropDown,
+    net_mode_dropdown: DropDown,
     input: vxfw.TextField,
+    temp: []const u8 = "",
     is_ip_valid: bool = false,
 
     dropdowns: [5]*DropDown = undefined,
@@ -74,9 +76,13 @@ pub const ConfigModel = struct {
                 .baudrate = @enumFromInt(try std.fmt.parseInt(u32, self.baudrate_dropdown.list.items[self.baudrate_dropdown.list_view.cursor].text[1..], 10)),
             } });
         } else {
-            // const address = try std.net.Address.parseIpAndPort(self.input.buf.buffer);
+            if (self.is_ip_valid) {
+                @import("main.zig").logger.log("Ip Addr: {s}\n", .{self.input.previous_val}) catch {};
+                const address = try std.net.Address.parseIpAndPort(self.input.previous_val);
 
-            // try tui.openStream(.{ .net_cfg = .{ .ip_address = self.input.buf.buffer, .port = 65432 } });
+                if (self.ip_dropdown.list_view.cursor == 0)
+                    try tui.openStream(.{ .net_cfg = .{ .addr = address, .mode = .Tcp } });
+            }
         }
 
         event.consumeAndRedraw();
@@ -123,6 +129,7 @@ pub const ConfigModel = struct {
                 self.parity_dropdown.description = " PAR:";
                 self.stopbits_dropdown.description = "SBIT:";
 
+                self.ip_dropdown.description = "Mode:";
                 self.ip_dropdown.list_view.children.builder.userdata = &self.ip_dropdown;
 
                 inline for (std.meta.fields(Serial.Baudrates)) |field| {
@@ -262,11 +269,6 @@ pub const ConfigModel = struct {
 
     pub fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
         const self: *ConfigModel = @ptrCast(@alignCast(ptr));
-
-        // const border_design: []const vxfw.Border.BorderLabel = &[_]vxfw.Border.BorderLabel{.{
-        //     .text = "Port Configuration",
-        //     .alignment = .top_left,
-        // }};
 
         if (self.state == .Ip) {
             return try self.drawIpConfigView(ctx);

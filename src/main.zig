@@ -64,6 +64,7 @@ pub fn main() !void {
     tui.* = .{
         .allocator = allocator,
         .serial = .{},
+        .net = .{},
         .send_view = .{
             .input = .{
                 .buf = vxfw.TextField.Buffer.init(allocator),
@@ -89,6 +90,7 @@ pub fn main() !void {
             .parity_dropdown = .{ .list = std.ArrayList(vxfw.Text).empty },
             .stopbits_dropdown = .{ .list = std.ArrayList(vxfw.Text).empty },
             .ip_dropdown = .{ .list = std.ArrayList(vxfw.Text).empty },
+            .net_mode_dropdown = .{ .list = std.ArrayList(vxfw.Text).empty },
             .userdata = tui,
             .input = .{
                 .buf = vxfw.TextField.Buffer.init(allocator),

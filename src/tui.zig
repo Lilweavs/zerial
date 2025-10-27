@@ -58,6 +58,7 @@ pub const SerialStream = union(enum) {
 
 pub const Tui = struct {
     serial: Serial,
+    net: NetStream,
     is_listening: bool = false,
     configuration_view: ConfigModel,
     serial_monitor: SerialMonitor,
@@ -268,24 +269,31 @@ pub const Tui = struct {
     };
 
     const NetConfig = struct {
-        ip_address: []const u8,
-        port: u16,
+        addr: std.net.Address,
+        mode: NetStream.NetMode,
     };
 
     pub fn openStream(self: *Tui, config: StreamConfig) !void {
         switch (config) {
             .ser_cfg => |cfg| {
                 if (self.serial.is_open) return;
-                if (try self.serial.openWithConfiguration(cfg)) return;
-                self.configuration_view.is_stream_open = true;
-                self.is_listening = true;
+                if (try self.serial.openWithConfiguration(cfg)) {
+                    (@import("main.zig").logger.log("Can't Configure\n", .{})) catch {};
+                    return;
+                }
                 self.reader = self.serial.getReaderInterface();
                 self.writer = self.serial.getWriterInterface();
             },
             .net_cfg => |cfg| {
-                std.debug.print("{any}\n", .{cfg});
+                if (self.net.is_open) return;
+                if (try self.net.connect(cfg.addr, .Tcp) == true) return;
+                self.reader = self.net.getReaderInterface();
+                self.writer = self.net.getWriterInterface();
             },
         }
+
+        self.is_listening = true;
+        self.configuration_view.is_stream_open = true;
         self.reader_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, Tui.streamReaderThread, .{self});
         self.reader_thread.?.detach();
         self.writer_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, Tui.streamWriterThread, .{self});

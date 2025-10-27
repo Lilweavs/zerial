@@ -96,6 +96,15 @@ pub const SendView = struct {
                 }
 
                 if (self.history_visible) {
+                    if (key.matches(vaxis.Key.enter, .{})) {
+                        if (self.history_list.list.items.len == 0) return;
+
+                        const to_send = self.history_list.list.items[self.history_list.list_view.cursor].text;
+
+                        _ = self.write_queue.tryPush(try ctx.alloc.dupe(u8, to_send));
+                        return ctx.consumeAndRedraw();
+                    }
+
                     return self.history_list.handleEvent(ctx, event);
                 } else {
                     defer {

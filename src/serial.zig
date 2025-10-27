@@ -54,6 +54,7 @@ pub fn openWithConfiguration(self: *Serial, opts: Options) !bool {
 
     self.file = std.fs.cwd().openFile(cfg.port, .{ .mode = .read_write }) catch |err| {
         self.error_code = err;
+        @import("main.zig").logger.log("Error: {t}\n", .{err}) catch {};
         return true;
     };
 

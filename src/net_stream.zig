@@ -17,9 +17,7 @@ pub const NetMode = enum {
     Udp,
 };
 
-pub fn connect(nw: *NetStream, ip_address: []const u8, port: u16, mode: NetMode) !void {
-    const addr = try std.net.Address.parseIp(ip_address, port);
-
+pub fn connect(nw: *NetStream, addr: std.net.Address, mode: NetMode) !bool {
     if (mode == .Tcp) {
         nw.stream = .{
             .handle = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.STREAM, std.posix.IPPROTO.TCP),
@@ -30,10 +28,11 @@ pub fn connect(nw: *NetStream, ip_address: []const u8, port: u16, mode: NetMode)
         };
     }
 
-    try std.posix.connect(nw.socket, &addr.any, addr.getOsSockLen());
+    try std.posix.connect(nw.stream.handle, &addr.any, addr.getOsSockLen());
     nw.reader = nw.stream.reader(&.{});
     nw.writer = nw.stream.writer(&.{});
     nw.is_open = true;
+    return false;
 }
 
 pub fn close(nw: *NetStream) void {
@@ -46,5 +45,5 @@ pub fn getReaderInterface(nw: *NetStream) *std.io.Reader {
 }
 
 pub fn getWriterInterface(nw: *NetStream) *std.io.Writer {
-    return nw.writer.interface();
+    return &nw.writer.interface;
 }
