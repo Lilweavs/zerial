@@ -70,6 +70,11 @@ pub const SendView = struct {
     history_list: DropDown,
     write_queue: *vaxis.Queue([]const u8, 32),
 
+    pub fn deinit(self: *SendView, allocator: Allocator) void {
+        self.input.deinit();
+        self.history_list.deinit(allocator);
+    }
+
     pub fn widget(self: *SendView) vxfw.Widget {
         return .{
             .userdata = self,

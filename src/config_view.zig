@@ -46,9 +46,13 @@ pub const ConfigModel = struct {
     pub const size = vxfw.Size{ .width = 22, .height = 10 };
 
     pub fn deinit(self: *ConfigModel) void {
-        for (self.dropdowns) |item| {
-            item.deinit(self.allocator);
-        }
+        self.port_dropdown.deinit(self.allocator);
+        self.baudrate_dropdown.deinit(self.allocator);
+        self.databits_dropdown.deinit(self.allocator);
+        self.parity_dropdown.deinit(self.allocator);
+        self.stopbits_dropdown.deinit(self.allocator);
+        self.ip_dropdown.deinit(self.allocator);
+        self.net_mode_dropdown.deinit(self.allocator);
     }
 
     fn validateIpInput(ptr: ?*anyopaque, event: *vxfw.EventContext, buffer: []const u8) anyerror!void {
@@ -133,24 +137,24 @@ pub const ConfigModel = struct {
                 self.ip_dropdown.list_view.children.builder.userdata = &self.ip_dropdown;
 
                 inline for (std.meta.fields(Serial.Baudrates)) |field| {
-                    try self.baudrate_dropdown.list.append(self.allocator, vxfw.Text{ .text = field.name });
+                    try self.baudrate_dropdown.list.append(self.allocator, vxfw.Text{ .text = try ctx.alloc.dupe(u8, field.name) });
                 }
 
                 inline for (std.meta.fields(ser_utils.WordSize)) |field| {
-                    try self.databits_dropdown.list.append(self.allocator, vxfw.Text{ .text = field.name });
+                    try self.databits_dropdown.list.append(self.allocator, vxfw.Text{ .text = try ctx.alloc.dupe(u8, field.name) });
                 }
                 self.databits_dropdown.list_view.cursor = @intCast(self.databits_dropdown.list.items.len - 1);
 
                 inline for (std.meta.fields(ser_utils.Parity)) |field| {
-                    try self.parity_dropdown.list.append(self.allocator, vxfw.Text{ .text = field.name });
+                    try self.parity_dropdown.list.append(self.allocator, vxfw.Text{ .text = try ctx.alloc.dupe(u8, field.name) });
                 }
 
                 inline for (std.meta.fields(ser_utils.StopBits)) |field| {
-                    try self.stopbits_dropdown.list.append(self.allocator, vxfw.Text{ .text = field.name });
+                    try self.stopbits_dropdown.list.append(self.allocator, vxfw.Text{ .text = try ctx.alloc.dupe(u8, field.name) });
                 }
 
                 inline for (std.meta.fields(@import("net_stream.zig").NetMode)) |field| {
-                    try self.ip_dropdown.list.append(self.allocator, vxfw.Text{ .text = field.name });
+                    try self.ip_dropdown.list.append(self.allocator, vxfw.Text{ .text = try ctx.alloc.dupe(u8, field.name) });
                 }
 
                 self.input.onChange = ConfigModel.validateIpInput;

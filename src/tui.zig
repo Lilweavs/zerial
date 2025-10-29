@@ -89,13 +89,15 @@ pub const Tui = struct {
     pub fn deinit(self: *Tui) void {
         self.closeStream();
         self.serial.deinit();
-        self.send_view.input.deinit();
+        self.send_view.deinit(self.allocator);
         self.configuration_view.deinit();
         self.is_listening = false;
         self.serial_monitor.deinit();
-    }
 
-    pub fn append() void {}
+        while (self.write_queue.tryPop()) |ptr| {
+            self.allocator.free(ptr);
+        }
+    }
 
     fn typeErasedEventHandler(ptr: *anyopaque, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
         const self: *Tui = @ptrCast(@alignCast(ptr));

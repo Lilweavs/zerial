@@ -11,9 +11,9 @@ pub const DropDown = struct {
     in_focus: bool = false,
 
     pub fn deinit(self: *DropDown, allocator: Allocator) void {
-        // for (self.text.items) |text| {
-        //     // allocator.free(text);
-        // }
+        for (self.list.items) |text| {
+            allocator.free(text.text);
+        }
         self.list.deinit(allocator);
     }
 
