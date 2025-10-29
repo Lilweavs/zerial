@@ -92,7 +92,6 @@ pub const SendView = struct {
         switch (event) {
             .init => {
                 self.history_list.list_view.children.builder.userdata = &self.history_list;
-                @import("main.zig").logger.log("Init Dropdown\n", .{}) catch {};
             },
             .key_press => |key| {
                 if (key.matches('h', .{ .ctrl = true })) {
@@ -107,6 +106,26 @@ pub const SendView = struct {
                         const to_send = self.history_list.list.items[self.history_list.list_view.cursor].text;
 
                         _ = self.write_queue.tryPush(try ctx.alloc.dupe(u8, to_send));
+                        return ctx.consumeAndRedraw();
+                    }
+
+                    if (key.matches('d', .{})) {
+                        if (self.history_list.list.items.len == 0) return;
+
+                        const ptr = self.history_list.list.orderedRemove(self.history_list.list_view.cursor);
+                        defer ctx.alloc.free(ptr.text);
+                        self.history_list.list_view.cursor -|= 1;
+                        return ctx.consumeAndRedraw();
+                    }
+
+                    if (key.matches('e', .{})) {
+                        if (self.history_list.list.items.len == 0) return;
+
+                        const item = self.history_list.list.items[self.history_list.list_view.cursor];
+                        self.input.clearAndFree();
+                        try self.input.insertSliceAtCursor(item.text);
+                        self.history_visible = false;
+
                         return ctx.consumeAndRedraw();
                     }
 
