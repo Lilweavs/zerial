@@ -52,12 +52,12 @@ pub fn build(b: *std.Build) void {
 
     //create executable
     const exe = b.addExecutable(.{
-        .name = "tui-serial",
+        .name = "zerial",
         .root_module = exe_mod,
     });
 
     const exe_check = b.addExecutable(.{
-        .name = "tui-serial",
+        .name = "zerial",
         .root_module = exe_mod,
     });
 
