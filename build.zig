@@ -39,6 +39,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const zon_module = b.createModule(.{
+        .root_source_file = b.path("build.zig.zon"),
+    });
+    exe_mod.addImport("build.zig.zon", zon_module);
+
     exe_mod.addImport("vaxis", vaxis.module("vaxis"));
     exe_mod.addImport("serial", serial.module("serial"));
 

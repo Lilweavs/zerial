@@ -8,6 +8,8 @@ const Serial = @import("serial.zig");
 const Logger = @import("log.zig");
 const DropDown = @import("config_view.zig").DropDown;
 const utils = @import("serial");
+const builtin = @import("builtin");
+const zon = @import("build.zig.zon");
 
 var buffer: [1024 * 4]u8 = undefined;
 
@@ -28,26 +30,6 @@ pub fn main() !void {
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
-
-    // const tui = try allocator.create(DropDown);
-    // const tui = try allocator.create(vxfw.ListView);
-
-    // const data = try allocator.alloc(vxfw.Widget, 3);
-
-    // data[0] = (vxfw.Text{ .text = try std.fmt.allocPrint(allocator, "hello", .{}) }).widget();
-    // data[1] = (vxfw.Text{ .text = try std.fmt.allocPrint(allocator, "world", .{}) }).widget();
-    // data[2] = (vxfw.Text{ .text = try std.fmt.allocPrint(allocator, "matey", .{}) }).widget();
-
-    // tui.* = .{ .text = std.ArrayList(vxfw.Text).init(allocator), .list = .{ .children = .{ .builder = .{ .userdata = tui, .buildFn = DropDown.widgetBuilder } } } };
-    // tui.* = .{ .text = std.ArrayList(vxfw.Text).init(allocator) };
-
-    // try tui.text.append(vxfw.Text{ .text = "hello" });
-    // try tui.text.append(vxfw.Text{ .text = "world" });
-    // try tui.text.append(vxfw.Text{ .text = "matey" });
-
-    // tui.* = .{
-    //     .children = .{ .slice = data },
-    // };
 
     const tui = try allocator.create(Tui.Tui);
     defer allocator.destroy(tui);
@@ -100,7 +82,34 @@ pub fn main() !void {
         },
     };
 
-    // all views that are not the default should not be statically allocated
+    const zerial_dir = try std.fs.getAppDataDir(allocator, @tagName(zon.name));
+    defer allocator.free(zerial_dir);
+
+    try std.fs.cwd().makePath(zerial_dir);
+
+    const file_history = try std.fs.path.join(allocator, &.{
+        zerial_dir,
+        "history.txt",
+    });
+    defer allocator.free(file_history);
+
+    var buf: [1024]u8 = undefined;
+    if (std.fs.cwd().openFile(file_history, .{ .mode = .read_only })) |file| {
+        defer file.close();
+        var file_reader = file.reader(&buf);
+        const reader = &file_reader.interface;
+
+        while (reader.takeDelimiterExclusive('\n')) |line| {
+            try tui.*.send_view.history_list.list.append(allocator, .{ .text = try allocator.dupe(u8, line) });
+        } else |err| switch (err) {
+            error.EndOfStream => {},
+            error.StreamTooLong,
+            error.ReadFailed,
+            => |e| return e,
+        }
+    } else |err| {
+        return err;
+    }
 
     try app.run(tui.widget(), .{});
     defer app.deinit();
@@ -113,6 +122,16 @@ pub fn main() !void {
             },
             else => {},
         }
+    }
+
+    var file = try std.fs.cwd().createFile(file_history, .{});
+    defer file.close();
+    var file_writer = file.writer(&.{});
+    var writer = &file_writer.interface;
+
+    for (tui.send_view.history_list.list.items) |item| {
+        try writer.writeAll(item.text);
+        try writer.writeByte('\n');
     }
 }
 
