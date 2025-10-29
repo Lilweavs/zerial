@@ -69,6 +69,23 @@ pub const SendView = struct {
     history_visible: bool = false,
     history_list: DropDown,
     write_queue: *vaxis.Queue([]const u8, 32),
+    delimiter: Delimiter = .CRLF,
+
+    const Delimiter = enum(u2) {
+        NONE,
+        CRLF,
+        CR,
+        LF,
+    };
+
+    fn getDelimiter(d: Delimiter) []const u8 {
+        return switch (d) {
+            .NONE => "",
+            .CRLF => "\r\n",
+            .CR => "\r",
+            .LF => "\n",
+        };
+    }
 
     pub fn deinit(self: *SendView, allocator: Allocator) void {
         self.input.deinit();
@@ -99,13 +116,21 @@ pub const SendView = struct {
                     return ctx.consumeAndRedraw();
                 }
 
+                if (key.matches('l', .{ .ctrl = true })) {
+                    var i: u2 = @intFromEnum(self.delimiter);
+                    i +%= 1;
+                    self.delimiter = @enumFromInt(i);
+                    // self.history_visible = !self.history_visible;
+                    return ctx.consumeAndRedraw();
+                }
+
                 if (self.history_visible) {
                     if (key.matches(vaxis.Key.enter, .{})) {
                         if (self.history_list.list.items.len == 0) return;
 
                         const to_send = self.history_list.list.items[self.history_list.list_view.cursor].text;
 
-                        _ = self.write_queue.tryPush(try ctx.alloc.dupe(u8, to_send));
+                        _ = self.write_queue.tryPush(try std.fmt.allocPrint(ctx.alloc, "{s}{s}", .{ to_send, getDelimiter(self.delimiter) }));
                         return ctx.consumeAndRedraw();
                     }
 
@@ -160,7 +185,7 @@ pub const SendView = struct {
             .text = try ctx.alloc.dupe(u8, str),
         });
 
-        _ = self.write_queue.tryPush(try ctx.alloc.dupe(u8, str));
+        _ = self.write_queue.tryPush(try std.fmt.allocPrint(ctx.alloc, "{s}{s}", .{ str, getDelimiter(self.delimiter) }));
 
         return ctx.consumeAndRedraw();
     }
@@ -187,9 +212,14 @@ pub const SendView = struct {
 
         try children.append(ctx.arena, .{
             .origin = .{ .row = 0, .col = width },
-            .surface = try (vxfw.Text{ .text = "CRLF", .style = .{ .fg = .{
-                .index = 1,
-            } } }).widget().draw(ctx),
+            .surface = try (vxfw.Text{
+                .text = @tagName(self.delimiter),
+                .style = .{
+                    .fg = .{
+                        .index = 1,
+                    },
+                },
+            }).widget().draw(ctx),
         });
         width += children.items[children.items.len - 1].surface.size.width;
 
