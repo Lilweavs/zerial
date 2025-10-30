@@ -70,10 +70,10 @@ pub const ConfigModel = struct {
         const self: *ConfigModel = @ptrCast(@alignCast(ptr));
         const tui: *@import("tui.zig").Tui = @ptrCast(@alignCast(self.userdata));
 
+        if (self.is_stream_open) return tui.closeStream();
+
         if (self.state == .Serial) {
             const port = self.port_dropdown.list.items[self.port_dropdown.list_view.cursor];
-
-            @import("main.zig").logger.log("Serial Port: {s}\n", .{port.text}) catch {};
 
             try tui.openStream(.{ .ser_cfg = .{
                 .port = port.text,
@@ -81,11 +81,10 @@ pub const ConfigModel = struct {
             } });
         } else {
             if (self.is_ip_valid) {
-                @import("main.zig").logger.log("Ip Addr: {s}\n", .{self.input.previous_val}) catch {};
                 const address = try std.net.Address.parseIpAndPort(self.input.previous_val);
 
                 if (self.ip_dropdown.list_view.cursor == 0)
-                    try tui.openStream(.{ .net_cfg = .{ .addr = address, .mode = .Tcp } });
+                    try tui.openStream(.{ .net_cfg = .{ .addr = address, .mode = .TCP } });
             }
         }
 
@@ -326,11 +325,12 @@ pub const ConfigModel = struct {
 
         if (self.is_stream_open) {
             self.button.label = "Close";
-            self.button.style.default = .{ .fg = .{ .index = 2 }, .reverse = true };
-            self.button.style.focus = .{ .fg = .{ .index = 2 }, .reverse = true, .blink = true };
+            self.button.style.default = .{ .reverse = true, .blink = true };
+            self.button.style.focus = .{ .reverse = true, .blink = true };
         } else {
             self.button.label = "Open";
-            self.button.style.focus = .{ .fg = .{ .index = 1 }, .reverse = true, .blink = true };
+            self.button.style.default = .{ .reverse = true, .blink = true };
+            self.button.style.focus = .{ .reverse = true, .blink = true };
         }
 
         return .{
@@ -367,11 +367,10 @@ pub const ConfigModel = struct {
 
         if (self.is_stream_open) {
             self.button.label = "Close";
-            self.button.style.default = .{ .fg = .{ .index = 2 }, .reverse = true };
-            self.button.style.focus = .{ .fg = .{ .index = 2 }, .reverse = true, .blink = true };
+            self.button.style.focus = .{ .reverse = true, .blink = true };
         } else {
             self.button.label = "Open";
-            self.button.style.focus = .{ .fg = .{ .index = 1 }, .reverse = true, .blink = true };
+            self.button.style.focus = .{ .reverse = true, .blink = true };
         }
 
         return .{

@@ -12,38 +12,50 @@ writer: std.net.Stream.Writer = undefined,
 
 is_open: bool = false,
 
+mode: NetMode = .TCP,
+addr: std.net.Address = .initIp4(.{ 127, 0, 0, 1 }, 65432),
+
+error_code: anyerror = error.None,
+
 pub const NetMode = enum {
-    Tcp,
-    Udp,
+    TCP,
+    UDP,
 };
 
-pub fn connect(nw: *NetStream, addr: std.net.Address, mode: NetMode) !bool {
-    if (mode == .Tcp) {
-        nw.stream = .{
-            .handle = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.STREAM, std.posix.IPPROTO.TCP),
-        };
-    } else {
-        nw.stream = .{
-            .handle = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM, std.posix.IPPROTO.UDP),
-        };
+pub fn getStatus(self: *NetStream, allocator: std.mem.Allocator) ![]const u8 {
+    return if (self.is_open) try std.fmt.allocPrint(allocator, "{s} | Connected: {f}", .{
+        @tagName(self.mode),
+        self.addr,
+    }) else try std.fmt.allocPrint(allocator, "SERIAL | Disonnected | Error: {t}", .{self.error_code});
+}
+
+pub fn connect(self: *NetStream, addr: std.net.Address, mode: NetMode) !void {
+    self.mode = mode;
+    self.addr = addr;
+    errdefer |err| {
+        self.error_code = err;
     }
 
-    try std.posix.connect(nw.stream.handle, &addr.any, addr.getOsSockLen());
-    nw.reader = nw.stream.reader(&.{});
-    nw.writer = nw.stream.writer(&.{});
-    nw.is_open = true;
-    return false;
+    self.stream = if (mode == .TCP)
+        .{ .handle = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.STREAM, std.posix.IPPROTO.TCP) }
+    else
+        .{ .handle = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM, std.posix.IPPROTO.UDP) };
+
+    try std.posix.connect(self.stream.handle, &addr.any, addr.getOsSockLen());
+    self.reader = self.stream.reader(&.{});
+    self.writer = self.stream.writer(&.{});
+    self.is_open = true;
 }
 
-pub fn close(nw: *NetStream) void {
-    nw.stream.close();
-    nw.is_open = false;
+pub fn close(self: *NetStream) void {
+    self.stream.close();
+    self.is_open = false;
 }
 
-pub fn getReaderInterface(nw: *NetStream) *std.io.Reader {
-    return nw.reader.interface();
+pub fn getReaderInterface(self: *NetStream) *std.io.Reader {
+    return self.reader.interface();
 }
 
-pub fn getWriterInterface(nw: *NetStream) *std.io.Writer {
-    return &nw.writer.interface;
+pub fn getWriterInterface(self: *NetStream) *std.io.Writer {
+    return &self.writer.interface;
 }

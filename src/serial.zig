@@ -14,7 +14,7 @@ writer: ?File.Writer = null,
 config: Options = .{},
 port_buffer: [256]u8 = undefined,
 
-error_code: ?anyerror = null,
+error_code: anyerror = error.None,
 
 pub const Baudrates = enum(u32) {
     b115200 = 115200,
@@ -43,25 +43,39 @@ pub fn getWriterInterface(self: *Serial) ?*std.Io.Writer {
     return if (self.writer) |*writer| &writer.interface else null;
 }
 
-pub fn openWithConfiguration(self: *Serial, opts: Options) !bool {
+pub fn getStatus(self: Serial, allocator: std.mem.Allocator) ![]const u8 {
+    return if (self.is_open)
+        try std.fmt.allocPrint(allocator, "SERIAL | Connected: {s} @ {d} {d}{c}{d}", .{
+            self.config.port,
+            @intFromEnum(self.config.baudrate),
+            @intFromEnum(self.config.wordsize),
+            @intFromEnum(self.config.parity),
+            @intFromEnum(self.config.stopbits),
+        })
+    else
+        try std.fmt.allocPrint(allocator, "SERIAL | Disonnected | Error: {t}", .{
+            self.error_code,
+        });
+}
+
+pub fn openWithConfiguration(self: *Serial, opts: Options) !void {
     if (self.is_open) {
         self.close();
     }
 
     var cfg = opts;
 
+    errdefer |err| {
+        self.error_code = err;
+    }
+
     cfg.port = try std.fmt.bufPrint(&self.port_buffer, if (builtin.os.tag == .windows) "\\\\.\\{s}" else "{s}", .{cfg.port});
 
-    self.file = std.fs.cwd().openFile(cfg.port, .{ .mode = .read_write }) catch |err| {
-        self.error_code = err;
-        @import("main.zig").logger.log("Error: {t}\n", .{err}) catch {};
-        return true;
-    };
+    self.file = try std.fs.cwd().openFile(cfg.port, .{ .mode = .read_write });
 
     utils.configureSerialPort(self.file.?, .{ .baud_rate = @intFromEnum(cfg.baudrate), .parity = cfg.parity, .stop_bits = cfg.stopbits, .word_size = cfg.wordsize }) catch {
         self.error_code = error.CannotConfigureSerialPort;
         self.close();
-        return true;
     };
 
     if (builtin.os.tag == .windows) {
@@ -89,8 +103,7 @@ pub fn openWithConfiguration(self: *Serial, opts: Options) !bool {
     self.reader = self.file.?.readerStreaming(&.{});
     self.writer = self.file.?.writerStreaming(&.{});
     self.is_open = true;
-    self.error_code = null;
-    return false;
+    self.error_code = error.None;
 }
 
 const COMMTIMEOUTS = extern struct {

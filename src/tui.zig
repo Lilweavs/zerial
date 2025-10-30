@@ -59,6 +59,7 @@ pub const SerialStream = union(enum) {
 pub const Tui = struct {
     serial: Serial,
     net: NetStream,
+    stream_mode: SerialStream = .Serial,
     is_listening: bool = false,
     configuration_view: ConfigModel,
     serial_monitor: SerialMonitor,
@@ -77,6 +78,8 @@ pub const Tui = struct {
 
     reader_thread: ?std.Thread = null,
     writer_thread: ?std.Thread = null,
+
+    bps: f32 = 0,
 
     pub fn widget(self: *Tui) vxfw.Widget {
         return .{
@@ -174,11 +177,6 @@ pub const Tui = struct {
 
         var children: std.ArrayList(vxfw.SubSurface) = .empty;
 
-        // var width: u16 = 0;
-        // var height: u16 = 0;
-
-        // var stream_status: []const u8 = "";
-
         try children.append(
             ctx.arena,
             .{
@@ -187,17 +185,11 @@ pub const Tui = struct {
                     .child = (vxfw.FlexRow{
                         .children = &.{
                             vxfw.FlexItem{
-                                .widget = (vxfw.Text{ .text = "Port: XXX @ 115200" }).widget(),
-                                .flex = 0,
-                            },
-                            vxfw.FlexItem{
                                 .widget = (vxfw.Text{
-                                    .text = try std.fmt.allocPrint(ctx.arena, "Mode: {s}", .{zerialStateToString(self.state)}),
-                                    .style = .{
-                                        .bg = .{
-                                            .index = zerialStateToColor(self.state),
-                                        },
-                                    },
+                                    .text = try std.fmt.allocPrint(ctx.arena, "{s} | {d}bps", .{
+                                        if (self.stream_mode == .Serial) try self.serial.getStatus(ctx.arena) else try self.net.getStatus(ctx.arena),
+                                        @as(u32, @intFromFloat(self.bps)),
+                                    }),
                                 }).widget(),
                                 .flex = 0,
                             },
@@ -279,16 +271,15 @@ pub const Tui = struct {
         switch (config) {
             .ser_cfg => |cfg| {
                 if (self.serial.is_open) return;
-                if (try self.serial.openWithConfiguration(cfg)) {
-                    (@import("main.zig").logger.log("Can't Configure\n", .{})) catch {};
-                    return;
-                }
+                self.stream_mode = .Serial;
+                self.serial.openWithConfiguration(cfg) catch return;
                 self.reader = self.serial.getReaderInterface();
                 self.writer = self.serial.getWriterInterface();
             },
             .net_cfg => |cfg| {
                 if (self.net.is_open) return;
-                if (try self.net.connect(cfg.addr, .Tcp) == true) return;
+                self.stream_mode = .NetStream;
+                self.net.connect(cfg.addr, .TCP) catch return;
                 self.reader = self.net.getReaderInterface();
                 self.writer = self.net.getWriterInterface();
             },
@@ -338,10 +329,23 @@ pub const Tui = struct {
 
     pub fn streamReaderThread(self: *Tui) !void {
         var buffer: std.Io.Writer.Discarding = .init(&rx_buffer);
-
+        // const alpha: f32 = 0.2;
+        var bps: u32 = 0;
+        var begin = std.time.milliTimestamp();
         while (self.is_listening) {
             std.Thread.sleep(1 * std.time.ns_per_ms);
+
             if (self.reader.?.stream(&buffer.writer, .unlimited)) |bytes_read| {
+                const dt = @as(f32, @floatFromInt(begin - std.time.milliTimestamp())) / 1000.0;
+                bps += @intCast(bytes_read);
+                if (dt > 1.0) {
+                    self.bps = @as(f32, @floatFromInt(bps)) / dt;
+                    bps = 0;
+                    begin = std.time.milliTimestamp();
+                    // self.bps = alpha * bps + (1.0 - alpha) * self.bps;
+                }
+                // const bps = @as(f32, @floatFromInt(@as(i64, @intCast(bytes_read)) * (end - begin))) / std.time.ms_per_s;
+
                 if (bytes_read == 0) continue;
 
                 var token: NewLineIterator = .{
