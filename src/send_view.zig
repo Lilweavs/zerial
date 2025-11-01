@@ -80,7 +80,9 @@ pub const SendView = struct {
 
                         const ptr = self.history_list.list.orderedRemove(self.history_list.list_view.cursor);
                         defer ctx.alloc.free(ptr.text);
-                        self.history_list.list_view.cursor -|= 1;
+                        if (self.history_list.list_view.cursor > self.history_list.list.items.len) {
+                            self.history_list.list_view.cursor -|= 1;
+                        }
                         return ctx.consumeAndRedraw();
                     }
 
