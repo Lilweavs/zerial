@@ -160,8 +160,7 @@ pub const Tui = struct {
             .tick => {
                 try ctx.tick(std.time.ms_per_s / 60, self.widget());
                 if (self.refresh) {
-                    self.refresh = false;
-                    return ctx.consumeAndRedraw();
+                    ctx.redraw = true;
                 }
             },
             else => {},
@@ -243,7 +242,7 @@ pub const Tui = struct {
                         .text = "Port Configuration",
                         .alignment = .top_center,
                     }},
-                }).widget().draw(ctx.withConstraints(ctx.min, .{ .width = ConfigModel.size.width, .height = ConfigModel.size.height })),
+                }).widget().draw(ctx),
             });
         }
 
