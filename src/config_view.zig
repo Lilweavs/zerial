@@ -107,9 +107,16 @@ pub const ConfigModel = struct {
 
     pub fn enumerateSerialPorts(self: *ConfigModel) !void {
         var com_port_iter = try ser_utils.list();
+
+        for (self.port_dropdown.list.items) |text| {
+            self.allocator.free(text.text);
+        }
+        self.port_dropdown.list.clearRetainingCapacity();
+
         while (try com_port_iter.next()) |com_port| {
-            const tmp = try std.fmt.allocPrint(self.allocator, "{s}", .{com_port.display_name});
-            try self.port_dropdown.list.append(self.allocator, vxfw.Text{ .text = tmp });
+            try self.port_dropdown.list.append(self.allocator, vxfw.Text{
+                .text = try self.allocator.dupe(u8, com_port.display_name),
+            });
         }
     }
 
@@ -235,16 +242,6 @@ pub const ConfigModel = struct {
                     }
 
                     return self.distributeEvent(ctx, event);
-
-                    // if (self.index_tcp == 0) {
-                    //     if (key.matches(vaxis.Key.enter, .{})) {
-                    //         // connect or disconnect
-                    //     }
-                    // } else {
-                    // return self.input.handleEvent(ctx, event);
-                    // }
-
-                    // return self.dropdowns[self.index_ser].widget().handleEvent(ctx, event);
                 }
             },
             else => {},
@@ -283,7 +280,7 @@ pub const ConfigModel = struct {
         var children: std.ArrayList(vxfw.SubSurface) = .empty;
 
         try children.append(ctx.arena, .{
-            .origin = .{ .row = 0, .col = 5 },
+            .origin = .{ .row = 0, .col = 6 },
             .surface = try self.button.widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = 8, .height = 1 })),
         });
 
@@ -291,37 +288,36 @@ pub const ConfigModel = struct {
             .origin = .{ .row = height, .col = 1 },
             .surface = try self.port_dropdown.widget().draw(ctx),
         });
-        height += children.items[children.items.len - 1].surface.size.height;
+        height += children.getLast().surface.size.height;
+        width = @max(width, children.getLast().surface.size.width);
 
         try children.append(ctx.arena, .{
             .origin = .{ .row = height, .col = 1 },
             .surface = try self.baudrate_dropdown.widget().draw(ctx),
         });
-        height += children.items[children.items.len - 1].surface.size.height;
+        height += children.getLast().surface.size.height;
+        width = @max(width, children.getLast().surface.size.width);
 
         try children.append(ctx.arena, .{
             .origin = .{ .row = height, .col = 1 },
             .surface = try self.databits_dropdown.widget().draw(ctx),
         });
-        height += children.items[children.items.len - 1].surface.size.height;
+        height += children.getLast().surface.size.height;
+        width = @max(width, children.getLast().surface.size.width);
 
         try children.append(ctx.arena, .{
             .origin = .{ .row = height, .col = 1 },
             .surface = try self.parity_dropdown.widget().draw(ctx),
         });
-        height += children.items[children.items.len - 1].surface.size.height;
+        height += children.getLast().surface.size.height;
+        width = @max(width, children.getLast().surface.size.width);
 
         try children.append(ctx.arena, .{
             .origin = .{ .row = height, .col = 1 },
             .surface = try self.stopbits_dropdown.widget().draw(ctx),
         });
-        height += children.items[children.items.len - 1].surface.size.height;
-
-        for (children.items) |surf| {
-            width = @max(surf.surface.size.width, width);
-        }
-        width += 6;
-        width = @max(width, 18);
+        height += children.getLast().surface.size.height;
+        width = @max(width, children.getLast().surface.size.width);
 
         if (self.is_stream_open) {
             self.button.label = "Close";
@@ -334,7 +330,7 @@ pub const ConfigModel = struct {
         }
 
         return .{
-            .size = .{ .width = ConfigModel.size.width, .height = height },
+            .size = .{ .width = width, .height = height },
             .widget = self.widget(),
             .buffer = &.{},
             .children = children.items,
@@ -344,19 +340,23 @@ pub const ConfigModel = struct {
     fn drawIpConfigView(self: *ConfigModel, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
         var children: std.ArrayList(vxfw.SubSurface) = .empty;
 
+        var height: u16 = 1;
+
         try children.append(ctx.arena, .{
-            .origin = .{ .row = 0, .col = 5 },
+            .origin = .{ .row = 0, .col = 7 },
             .surface = try self.button.widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = 8, .height = 1 })),
         });
 
         try children.append(ctx.arena, .{
-            .origin = .{ .row = 1, .col = 7 },
-            .surface = try (self.ip_dropdown.widget().draw(ctx.withConstraints(ctx.min, .{ .width = ConfigModel.size.width, .height = ConfigModel.size.height }))),
+            .origin = .{ .row = 1, .col = 6 },
+            .surface = try (self.ip_dropdown.widget().draw(ctx.withConstraints(ctx.min, .{ .width = 8, .height = 2 }))),
         });
+
+        height += children.getLast().surface.size.height;
 
         try children.append(ctx.arena, .{
             .origin = .{
-                .row = 1 + children.items[1].surface.size.height,
+                .row = 1 + children.getLast().surface.size.height,
                 .col = 0,
             },
             .surface = try (vxfw.Border{ .child = self.input.widget(), .style = .{
@@ -364,6 +364,8 @@ pub const ConfigModel = struct {
                 .fg = if (self.is_ip_valid) .{ .index = 2 } else .{ .index = 1 },
             } }).widget().draw(ctx.withConstraints(ctx.min, .{ .width = ConfigModel.size.width, .height = ConfigModel.size.height })),
         });
+
+        height += children.getLast().surface.size.height;
 
         if (self.is_stream_open) {
             self.button.label = "Close";
@@ -374,7 +376,7 @@ pub const ConfigModel = struct {
         }
 
         return .{
-            .size = .{ .width = children.items[2].surface.size.width, .height = 10 },
+            .size = .{ .width = children.getLast().surface.size.width, .height = height },
             .widget = self.widget(),
             .buffer = &.{},
             .children = children.items,

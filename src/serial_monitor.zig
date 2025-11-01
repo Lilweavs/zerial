@@ -175,7 +175,7 @@ pub const SerialMonitor = struct {
                 .surface = try model.widget().draw(ctx.withConstraints(ctx.min, .{ .width = ctx.max.width.? - 3, .height = 1 })),
             });
 
-            total_height += surfaces.items[surfaces.items.len - 1].surface.size.height;
+            total_height += surfaces.getLast().surface.size.height;
         }
 
         return .{
@@ -210,6 +210,10 @@ pub const ModelRow = struct {
         const seconds = @abs(@divFloor(milliseconds, std.time.ms_per_s));
         milliseconds = @mod(milliseconds, std.time.ms_per_s);
 
+        var children = std.ArrayList(vxfw.SubSurface).empty;
+
+        var width: u16 = 0;
+
         var text: []const u8 = undefined;
         if (self.state == .Binary) {
             const tmp = try ctx.arena.alloc(u8, self.record.text.len * 3);
@@ -221,31 +225,34 @@ pub const ModelRow = struct {
             text = self.record.text;
         }
 
-        const content = vxfw.Text{
-            .text = text,
-            .softwrap = false,
-            .style = .{
-                .fg = .{
-                    .index = if (self.record.rxOrTx == .RX) 7 else 6,
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = 0, .col = 0 },
+            .surface = try (vxfw.Text{
+                .text = try std.fmt.allocPrint(ctx.arena, "{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3} >", .{ hours, mins, seconds, @as(usize, @intCast(milliseconds)) }),
+                .style = .{
+                    .fg = .{
+                        .rgb = .{ 255, 255, 0 },
+                    },
                 },
-            },
-        };
+            }).widget().draw(ctx),
+        });
 
-        const row = vxfw.FlexRow{
-            .children = &.{
-                vxfw.FlexItem{
-                    .widget = (vxfw.Text{
-                        .text = try std.fmt.allocPrint(ctx.arena, "{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3} >", .{ hours, mins, seconds, @as(usize, @intCast(milliseconds)) }),
-                        .style = .{ .fg = .{ .rgb = .{ 255, 255, 0 } } },
-                    }).widget(),
-                    .flex = 0,
+        width += children.getLast().surface.size.width;
+
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = 0, .col = width },
+            .surface = try (vxfw.Text{
+                .text = text,
+                .softwrap = false,
+                .style = .{
+                    .fg = .{
+                        .index = if (self.record.rxOrTx == .RX) 7 else 6,
+                    },
                 },
-                vxfw.FlexItem{
-                    .widget = content.widget(),
-                    .flex = 1,
-                },
-            },
-        };
+            }).widget().draw(ctx),
+        });
+
+        width += children.getLast().surface.size.width;
 
         // 0: black
         // 1: red
@@ -258,17 +265,11 @@ pub const ModelRow = struct {
         // 8: grey
         // 9: ligher red or mod 8
 
-        const children = try ctx.arena.alloc(vxfw.SubSurface, 1);
-        children[0] = vxfw.SubSurface{
-            .origin = .{ .row = 0, .col = 0 },
-            .surface = try row.widget().draw(ctx.withConstraints(ctx.min, .{ .width = ctx.max.width, .height = 1 })),
-        };
-
         return .{
-            .size = children[0].surface.size,
+            .size = .{ .width = width, .height = 1 },
             .widget = self.widget(),
             .buffer = &.{},
-            .children = children,
+            .children = children.items,
         };
     }
 };

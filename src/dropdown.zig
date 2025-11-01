@@ -83,38 +83,46 @@ pub const DropDown = struct {
         var width: u16 = 0;
         var height: u16 = 1;
 
-        const dropdown_len: u16 = 3;
+        const fudge: u16 = 3;
 
         if (self.description) |description| {
             try children.append(ctx.arena, .{
                 .origin = .{ .row = 0, .col = 0 },
-                .surface = try (vxfw.Text{ .text = description }).widget().draw(ctx.withConstraints(ctx.min, .{ .width = @intCast(description.len), .height = 1 })),
+                .surface = try (vxfw.Text{
+                    .text = description,
+                }).widget().draw(ctx.withConstraints(ctx.min, .{ .width = @intCast(description.len), .height = 1 })),
             });
 
-            width += @intCast(description.len + dropdown_len);
+            width += children.getLast().surface.size.width + fudge;
 
             if (self.is_expanded) {
                 var max_list_length: u16 = 0;
                 for (self.list.items) |item| {
-                    max_list_length = @max(width, @as(u16, @intCast(item.text.len)));
+                    max_list_length = @max(max_list_length, @as(u16, @intCast(item.text.len)));
                 }
                 try children.append(ctx.arena, vxfw.SubSurface{
                     .origin = .{ .row = 0, .col = width },
-                    .surface = try self.list_view.draw(ctx),
+                    .surface = try self.list_view.draw(ctx.withConstraints(ctx.min, .{
+                        .width = max_list_length + 3,
+                        .height = if (self.list.items.len < 10) @intCast(self.list.items.len) else 10,
+                    })),
                 });
-                width += children.items[1].surface.size.width;
-                height = @intCast(@max(1, self.list.items.len));
+                width += children.getLast().surface.size.width;
+                height += children.getLast().surface.size.height;
             } else {
                 const text_len: u16 = @intCast(self.list.items[self.list_view.cursor].text.len);
                 try children.append(ctx.arena, .{
                     .origin = .{ .row = 0, .col = width },
-                    .surface = try (vxfw.Text{ .text = self.list.items[self.list_view.cursor].text, .style = .{ .reverse = self.in_focus } }).widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = text_len, .height = 1 })),
+                    .surface = try (vxfw.Text{
+                        .text = self.list.items[self.list_view.cursor].text,
+                        .style = .{ .reverse = self.in_focus },
+                    }).widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = text_len, .height = 1 })),
                 });
                 width += text_len;
             }
         } else {
             if (self.is_expanded) {
-                width += dropdown_len;
+                width += fudge;
 
                 var max_list_length: u16 = 0;
                 for (self.list.items) |item| {
@@ -122,9 +130,12 @@ pub const DropDown = struct {
                 }
                 try children.append(ctx.arena, vxfw.SubSurface{
                     .origin = .{ .row = 0, .col = width },
-                    .surface = try self.list_view.draw(ctx),
+                    .surface = try self.list_view.draw(ctx.withConstraints(ctx.min, .{
+                        .width = max_list_length + 3,
+                        .height = 10,
+                    })),
                 });
-                width += children.items[children.items.len - 1].surface.size.width;
+                width += children.getLast().surface.size.width;
                 height = @intCast(@max(1, self.list.items.len));
             } else {
                 const text: []const u8 = if (self.list.items.len == 0) "" else self.list.items[self.list_view.cursor].text;
