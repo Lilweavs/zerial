@@ -4,6 +4,7 @@ const Serial = @import("serial.zig");
 const ser_utils = @import("serial");
 const Logger = @import("log.zig");
 const DropDown = @import("dropdown.zig").DropDown;
+const HorizontalLine = @import("HorizontalLine.zig").HorizontalLine;
 
 const vxfw = vaxis.vxfw;
 
@@ -274,7 +275,7 @@ pub const ConfigModel = struct {
             return try self.drawIpConfigView(ctx);
         }
 
-        var height: u16 = 1;
+        var height: u16 = 0;
         var width: u16 = 0;
 
         var children: std.ArrayList(vxfw.SubSurface) = .empty;
@@ -283,6 +284,14 @@ pub const ConfigModel = struct {
             .origin = .{ .row = 0, .col = 6 },
             .surface = try self.button.widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = 8, .height = 1 })),
         });
+        height += children.getLast().surface.size.height;
+        width = @max(width, children.getLast().surface.size.width);
+
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = height, .col = 0 },
+            .surface = try (HorizontalLine{}).widget().draw(ctx.withConstraints(ctx.min, ctx.max)),
+        });
+        height += children.getLast().surface.size.height;
 
         try children.append(ctx.arena, .{
             .origin = .{ .row = height, .col = 1 },
@@ -340,15 +349,23 @@ pub const ConfigModel = struct {
     fn drawIpConfigView(self: *ConfigModel, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
         var children: std.ArrayList(vxfw.SubSurface) = .empty;
 
-        var height: u16 = 1;
+        var height: u16 = 0;
 
         try children.append(ctx.arena, .{
-            .origin = .{ .row = 0, .col = 7 },
+            .origin = .{ .row = height, .col = 7 },
             .surface = try self.button.widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = 8, .height = 1 })),
         });
 
+        height += children.getLast().surface.size.height;
+
         try children.append(ctx.arena, .{
-            .origin = .{ .row = 1, .col = 6 },
+            .origin = .{ .row = height, .col = 0 },
+            .surface = try (HorizontalLine{}).widget().draw(ctx.withConstraints(ctx.min, ctx.max)),
+        });
+        height += children.getLast().surface.size.height;
+
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = height, .col = 6 },
             .surface = try (self.ip_dropdown.widget().draw(ctx.withConstraints(ctx.min, .{ .width = 8, .height = 2 }))),
         });
 
@@ -356,7 +373,7 @@ pub const ConfigModel = struct {
 
         try children.append(ctx.arena, .{
             .origin = .{
-                .row = 1 + children.getLast().surface.size.height,
+                .row = height,
                 .col = 0,
             },
             .surface = try (vxfw.Border{ .child = self.input.widget(), .style = .{
