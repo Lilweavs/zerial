@@ -294,14 +294,17 @@ pub const Tui = struct {
     }
 
     pub fn closeStream(self: *Tui) void {
-        if (!self.serial.is_open) return;
         self.is_listening = false;
-        self.configuration_view.is_stream_open = false;
-        self.reader = null;
-        self.writer = null;
         // wait for threads to finish
         std.Thread.sleep(100 * std.time.ns_per_ms);
-        self.serial.close();
+        self.reader = null;
+        self.writer = null;
+        self.configuration_view.is_stream_open = false;
+        if (self.stream_mode == .Serial) {
+            self.serial.close();
+        } else {
+            self.net.close();
+        }
     }
 
     fn streamWriterThread(self: *Tui) anyerror!void {
