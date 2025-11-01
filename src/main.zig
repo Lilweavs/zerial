@@ -107,8 +107,12 @@ pub fn main() !void {
             error.ReadFailed,
             => |e| return e,
         }
-    } else |err| {
-        return err;
+    } else |err| switch (err) {
+        error.FileNotFound => {
+            const f = try std.fs.cwd().createFile(file_history, .{});
+            f.close();
+        },
+        else => return err,
     }
 
     try app.run(tui.widget(), .{});
