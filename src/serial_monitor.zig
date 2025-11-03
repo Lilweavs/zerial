@@ -133,6 +133,23 @@ pub const SerialMonitor = struct {
                     self.hex_index -|= 1;
                     ctx.consumeAndRedraw();
                 }
+                if (key.matches('j', .{ .shift = true })) {
+                    self.index += 5;
+                    self.hex_index += 5;
+                    ctx.consumeAndRedraw();
+                }
+                if (key.matches('k', .{ .shift = true })) {
+                    self.index -|= 5;
+                    self.hex_index -|= 5;
+                    ctx.consumeAndRedraw();
+                }
+                if (key.matches('>', .{})) {
+                    self.snap_to_bottom = true;
+                }
+                if (key.matches('<', .{})) {
+                    self.index = 0;
+                    self.hex_index = 0;
+                }
             },
             else => {},
         }
