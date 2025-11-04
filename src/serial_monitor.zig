@@ -33,6 +33,9 @@ pub const SerialMonitor = struct {
     snap: SnapMode = .Bot,
     view_state: State = .Ascii,
 
+    top: usize = 0,
+    bot: usize = 0,
+
     pub const SnapMode = enum {
         None,
         Top,
@@ -131,23 +134,15 @@ pub const SerialMonitor = struct {
             .key_press => |key| {
                 if (key.matches('j', .{})) {
                     self.index += 1;
-                    self.hex_index += 1;
-                    ctx.consumeAndRedraw();
                 }
                 if (key.matches('k', .{})) {
                     self.index -|= 1;
-                    self.hex_index -|= 1;
-                    ctx.consumeAndRedraw();
                 }
                 if (key.matches('j', .{ .shift = true })) {
                     self.index += 5;
-                    self.hex_index += 5;
-                    ctx.consumeAndRedraw();
                 }
                 if (key.matches('k', .{ .shift = true })) {
                     self.index -|= 5;
-                    self.hex_index -|= 5;
-                    ctx.consumeAndRedraw();
                 }
                 if (key.matches('>', .{})) {
                     self.snap = .Bot;
@@ -155,6 +150,12 @@ pub const SerialMonitor = struct {
                 if (key.matches('<', .{})) {
                     self.snap = .Top;
                 }
+                if (key.matches('c', .{ .shift = true })) {
+                    if (self.data.size != 0) {
+                        try ctx.cmds.append(ctx.alloc, .{ .copy_to_clipboard = self.data.get(self.index).text });
+                    }
+                }
+                ctx.consumeAndRedraw();
             },
             else => {},
         }
@@ -173,9 +174,7 @@ pub const SerialMonitor = struct {
         switch (self.snap) {
             .None => {},
             .Bot => {
-                self.index = self.data.size -| max_height;
-                self.hex_index = self.hex_data.size -| max_height;
-                self.snap = .None;
+                self.index = self.data.size -| 1;
             },
             .Top => {
                 self.index = 0;
@@ -183,32 +182,35 @@ pub const SerialMonitor = struct {
         }
         self.snap = .None;
 
-        self.index = @min(self.index, self.data.size -| 1);
-        self.hex_index = @min(self.hex_index, self.hex_data.size -| 1);
+        if (self.index < self.top) {
+            self.top = self.index;
+            self.bot = @min(self.top + max_height, self.data.size) -| 1;
+        }
 
-        const start = if (self.view_state == .Ascii) self.index else self.hex_index;
-        const end = if (self.view_state == .Ascii) self.data.size else self.hex_data.size;
+        if (self.index > self.bot) {
+            self.index = @min(self.index, self.data.size -| 1);
+            self.bot = self.index;
+            self.top = self.bot -| (max_height - 1);
+        }
 
-        for (start..end) |i| {
-            if (total_height >= max_height) {
-                break;
+        if (self.top != self.bot) {
+            for (self.top..self.bot + 1) |i| {
+                var model: ModelRow = .{
+                    .record = if (self.view_state == .Ascii) self.data.get(i) else self.hex_data.get(i),
+                    .state = self.view_state,
+                    .selected = (i == self.index),
+                };
+
+                try children.append(ctx.arena, vxfw.SubSurface{
+                    .origin = .{ .row = @intCast(total_height), .col = 0 },
+                    .surface = try model.widget().draw(ctx.withConstraints(ctx.min, .{ .width = ctx.max.width.? - 3, .height = 1 })),
+                });
+                total_height += 1;
             }
-
-            var model: ModelRow = .{
-                .record = if (self.view_state == .Ascii) self.data.get(i) else self.hex_data.get(i),
-                .state = self.view_state,
-            };
-
-            try children.append(ctx.arena, vxfw.SubSurface{
-                .origin = .{ .row = @intCast(total_height), .col = 0 },
-                .surface = try model.widget().draw(ctx.withConstraints(ctx.min, .{ .width = ctx.max.width.? - 3, .height = 1 })),
-            });
-
-            total_height += children.getLast().surface.size.height;
         }
 
         return .{
-            .size = .{ .width = ctx.max.width.?, .height = @max(ctx.max.height.?, @as(u16, @intCast(total_height))) },
+            .size = .{ .width = ctx.max.width.?, .height = max_height },
             .widget = self.widget(),
             .buffer = &.{},
             .children = children.items,
