@@ -108,6 +108,10 @@ pub const SendView = struct {
                     return self.input.handleEvent(ctx, event);
                 }
             },
+            .paste => {
+                try self.input.insertSliceAtCursor(event.paste);
+                return ctx.consumeAndRedraw();
+            },
             else => {},
         }
 

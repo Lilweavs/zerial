@@ -150,7 +150,7 @@ pub const SerialMonitor = struct {
                 if (key.matches('<', .{})) {
                     self.snap = .Top;
                 }
-                if (key.matches('c', .{ .shift = true })) {
+                if (key.matches('y', .{})) {
                     if (self.data.size != 0) {
                         try ctx.cmds.append(ctx.alloc, .{ .copy_to_clipboard = self.data.get(self.index).text });
                     }

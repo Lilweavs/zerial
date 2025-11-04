@@ -148,7 +148,7 @@ pub const Tui = struct {
                     return ctx.consumeAndRedraw();
                 }
 
-                if (key.matches('e', .{ .ctrl = true })) {
+                if (key.matches('e', .{})) {
                     self.state = .Configuration;
                     try self.configuration_view.enumerateSerialPorts();
                     ctx.consumeAndRedraw();
@@ -156,6 +156,11 @@ pub const Tui = struct {
                 }
 
                 return self.serial_monitor.handleEvent(ctx, event);
+            },
+            .paste => {
+                if (self.state == .SendView) {
+                    return self.send_view.handleEvent(ctx, event);
+                }
             },
             .tick => {
                 try ctx.tick(std.time.ms_per_s / 60, self.widget());
