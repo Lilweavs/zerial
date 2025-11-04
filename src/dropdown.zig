@@ -94,58 +94,32 @@ pub const DropDown = struct {
             });
 
             width += children.getLast().surface.size.width + fudge;
+        }
 
-            if (self.is_expanded) {
-                var max_list_length: u16 = 0;
-                for (self.list.items) |item| {
-                    max_list_length = @max(max_list_length, @as(u16, @intCast(item.text.len)));
-                }
-                try children.append(ctx.arena, vxfw.SubSurface{
-                    .origin = .{ .row = 0, .col = width },
-                    .surface = try self.list_view.draw(ctx.withConstraints(ctx.min, .{
-                        .width = max_list_length + 3,
-                        .height = if (self.list.items.len < 10) @intCast(self.list.items.len) else 10,
-                    })),
-                });
-                width += children.getLast().surface.size.width;
-                height += children.getLast().surface.size.height;
-            } else {
-                const text_len: u16 = @intCast(self.list.items[self.list_view.cursor].text.len);
-                try children.append(ctx.arena, .{
-                    .origin = .{ .row = 0, .col = width },
-                    .surface = try (vxfw.Text{
-                        .text = self.list.items[self.list_view.cursor].text,
-                        .style = .{ .reverse = self.in_focus },
-                    }).widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = text_len, .height = 1 })),
-                });
-                width += text_len;
+        if (self.is_expanded) {
+            var max_list_length: u16 = 0;
+            for (self.list.items) |item| {
+                max_list_length = @max(max_list_length, @as(u16, @intCast(item.text.len)));
             }
+            try children.append(ctx.arena, vxfw.SubSurface{
+                .origin = .{ .row = 0, .col = width },
+                .surface = try self.list_view.draw(ctx.withConstraints(ctx.min, .{
+                    .width = max_list_length + 3,
+                    .height = if (self.list.items.len < 10) @intCast(self.list.items.len) else 10,
+                })),
+            });
+            width += children.getLast().surface.size.width;
+            height += children.getLast().surface.size.height;
         } else {
-            if (self.is_expanded) {
-                width += fudge;
-
-                var max_list_length: u16 = 0;
-                for (self.list.items) |item| {
-                    max_list_length = @max(width, @as(u16, @intCast(item.text.len)));
-                }
-                try children.append(ctx.arena, vxfw.SubSurface{
-                    .origin = .{ .row = 0, .col = width },
-                    .surface = try self.list_view.draw(ctx.withConstraints(ctx.min, .{
-                        .width = max_list_length + 3,
-                        .height = 10,
-                    })),
-                });
-                width += children.getLast().surface.size.width;
-                height = @intCast(@max(1, self.list.items.len));
-            } else {
-                const text: []const u8 = if (self.list.items.len == 0) "" else self.list.items[self.list_view.cursor].text;
-                const text_len: u16 = @intCast(self.list.items[self.list_view.cursor].text.len);
-                try children.append(ctx.arena, .{
-                    .origin = .{ .row = 0, .col = width },
-                    .surface = try (vxfw.Text{ .text = text, .style = .{ .reverse = self.in_focus } }).widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = text_len, .height = 1 })),
-                });
-                width += text_len;
-            }
+            const text_len: u16 = @intCast(self.list.items[self.list_view.cursor].text.len);
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = 0, .col = width },
+                .surface = try (vxfw.Text{
+                    .text = self.list.items[self.list_view.cursor].text,
+                    .style = .{ .reverse = self.in_focus },
+                }).widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = text_len, .height = 1 })),
+            });
+            width += text_len;
         }
 
         const size = vxfw.Size{ .width = width, .height = height };

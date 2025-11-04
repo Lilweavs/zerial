@@ -117,10 +117,7 @@ pub const SendView = struct {
     pub fn onSubmit(ptr: ?*anyopaque, ctx: *vxfw.EventContext, str: []const u8) anyerror!void {
         const self: *SendView = @ptrCast(@alignCast(ptr));
 
-        @import("main.zig").logger.log("\n", .{}) catch {};
-
         for (self.history_list.list.items) |item| {
-            @import("main.zig").logger.log("{s}", .{item.text}) catch {};
             if (std.mem.eql(u8, item.text, str)) {
                 break;
             }
@@ -151,7 +148,7 @@ pub const SendView = struct {
             .origin = .{ .row = 0, .col = width },
             .surface = try self.input.widget().draw(ctx.withConstraints(ctx.min, .{ .width = ctx.max.width.? - (width + 4), .height = 1 })),
         });
-        width += children.items[children.items.len - 1].surface.size.width;
+        width += children.getLast().surface.size.width;
 
         try children.append(ctx.arena, .{
             .origin = .{ .row = 0, .col = width },
@@ -164,7 +161,7 @@ pub const SendView = struct {
                 },
             }).widget().draw(ctx),
         });
-        width += children.items[children.items.len - 1].surface.size.width;
+        width += children.getLast().surface.size.width;
 
         if (self.history_visible) {
             try children.append(ctx.arena, .{ .origin = .{ .row = 1, .col = 0 }, .surface = try (HorizontalLine{ .label = .{ .text = "History", .alignment = .center } }).widget().draw(ctx.withConstraints(ctx.min, ctx.max)) });
@@ -174,10 +171,11 @@ pub const SendView = struct {
 
             try children.append(ctx.arena, .{
                 .origin = .{ .row = height, .col = 0 },
-                .surface = try self.history_list.widget().draw(ctx.withConstraints(ctx.min, ctx.max)),
+                .surface = try self.history_list.widget().draw(ctx.withConstraints(.{ .width = ctx.max.width.? - 5, .height = 1 }, ctx.max)),
             });
 
-            height += children.items[children.items.len - 1].surface.size.height;
+            // width += children.getLast().surface.size.width;
+            height += children.getLast().surface.size.height;
         }
 
         return .{

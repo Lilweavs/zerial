@@ -35,14 +35,6 @@ pub fn main() !void {
     defer allocator.destroy(tui);
     defer tui.deinit();
 
-    try logger.log("Hello, World!\n", .{});
-
-    // var available_ports = try utils.list();
-
-    // while (try available_ports.next()) |port| {
-    //     try logger.log("{s}\n  {s}\n", .{ port.file_name, port.display_name });
-    // }
-
     tui.* = .{
         .allocator = allocator,
         .serial = .{},
@@ -60,8 +52,8 @@ pub fn main() !void {
             .write_queue = &tui.write_queue,
         },
         .serial_monitor = .{
-            .data = try @import("circular_array.zig").CircularArray(@import("serial_monitor.zig").Record).initCapacity(allocator, 1024),
-            .hex_data = try @import("circular_array.zig").CircularArray(@import("serial_monitor.zig").Record).initCapacity(allocator, 1024),
+            .data = try @import("circular_array.zig").CircularArray(@import("serial_monitor.zig").Record).initCapacity(allocator, 2048),
+            .hex_data = try @import("circular_array.zig").CircularArray(@import("serial_monitor.zig").Record).initCapacity(allocator, 2048),
             .allocator = allocator,
         },
         .configuration_view = .{

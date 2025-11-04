@@ -81,9 +81,9 @@ pub fn openWithConfiguration(self: *Serial, opts: Options) !void {
     if (builtin.os.tag == .windows) {
         var timeouts: COMMTIMEOUTS = undefined;
         if (GetCommTimeouts(self.file.?.handle, &timeouts) == 0) {
-            @import("main.zig").logger.log("GetLastError: {d}\n", .{std.os.windows.kernel32.GetLastError()}) catch {};
+            // @import("main.zig").logger.log("GetLastError: {d}\n", .{std.os.windows.kernel32.GetLastError()}) catch {};
         } else {
-            @import("main.zig").logger.log("[ SUCCESS ]: GetCommTimeouts\n", .{}) catch {};
+            // @import("main.zig").logger.log("[ SUCCESS ]: GetCommTimeouts\n", .{}) catch {};
         }
 
         timeouts.read_interval_timeout = std.math.maxInt(std.os.windows.DWORD);
@@ -93,9 +93,9 @@ pub fn openWithConfiguration(self: *Serial, opts: Options) !void {
         timeouts.write_total_timeout_constant = 0;
 
         if (SetCommTimeouts(self.file.?.handle, &timeouts) == 0) {
-            @import("main.zig").logger.log("GetLastError: {}\n", .{std.os.windows.kernel32.GetLastError()}) catch {};
+            // @import("main.zig").logger.log("GetLastError: {}\n", .{std.os.windows.kernel32.GetLastError()}) catch {};
         } else {
-            @import("main.zig").logger.log("[ SUCCESS ]: SetCommTimeouts\n", .{}) catch {};
+            // @import("main.zig").logger.log("[ SUCCESS ]: SetCommTimeouts\n", .{}) catch {};
         }
     }
 
