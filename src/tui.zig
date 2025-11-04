@@ -324,7 +324,7 @@ pub const Tui = struct {
             _ = try std.io.Writer.write(writer, to_send);
             try std.io.Writer.flush(writer);
 
-            self.serial_monitor.snap_to_bottom = true;
+            self.serial_monitor.snap = .Bot;
             self.refresh = true;
         }
     }
@@ -363,7 +363,7 @@ pub const Tui = struct {
                 }
 
                 _ = std.Io.Writer.consumeAll(&buffer.writer);
-                self.serial_monitor.snap_to_bottom = true;
+                self.serial_monitor.snap = .Bot;
                 self.refresh = true;
             } else |err| {
                 (@import("main.zig").logger.log("Error: {t}\n", .{err})) catch {};

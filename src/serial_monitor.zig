@@ -30,8 +30,14 @@ pub const SerialMonitor = struct {
     allocator: Allocator,
     data: CircularArray.CircularArray(Record),
     hex_data: CircularArray.CircularArray(Record),
-    snap_to_bottom: bool = false,
+    snap: SnapMode = .Bot,
     view_state: State = .Ascii,
+
+    pub const SnapMode = enum {
+        None,
+        Top,
+        Bot,
+    };
 
     pub fn widget(self: *SerialMonitor) vxfw.Widget {
         return .{
@@ -144,11 +150,10 @@ pub const SerialMonitor = struct {
                     ctx.consumeAndRedraw();
                 }
                 if (key.matches('>', .{})) {
-                    self.snap_to_bottom = true;
+                    self.snap = .Bot;
                 }
                 if (key.matches('<', .{})) {
-                    self.index = 0;
-                    self.hex_index = 0;
+                    self.snap = .Top;
                 }
             },
             else => {},
@@ -159,17 +164,24 @@ pub const SerialMonitor = struct {
     pub fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
         const self: *SerialMonitor = @ptrCast(@alignCast(ptr));
 
-        var surfaces = try std.ArrayList(vxfw.SubSurface).initCapacity(ctx.arena, ctx.max.height.?);
+        var children: std.ArrayList(vxfw.SubSurface) = .empty;
 
         var total_height: usize = 0;
 
         const max_height = ctx.max.height.?;
 
-        if (self.snap_to_bottom) {
-            self.index = self.data.size -| max_height;
-            self.hex_index = self.hex_data.size -| max_height;
-            self.snap_to_bottom = false;
+        switch (self.snap) {
+            .None => {},
+            .Bot => {
+                self.index = self.data.size -| max_height;
+                self.hex_index = self.hex_data.size -| max_height;
+                self.snap = .None;
+            },
+            .Top => {
+                self.index = 0;
+            },
         }
+        self.snap = .None;
 
         self.index = @min(self.index, self.data.size -| 1);
         self.hex_index = @min(self.hex_index, self.hex_data.size -| 1);
@@ -187,19 +199,19 @@ pub const SerialMonitor = struct {
                 .state = self.view_state,
             };
 
-            try surfaces.append(ctx.arena, vxfw.SubSurface{
+            try children.append(ctx.arena, vxfw.SubSurface{
                 .origin = .{ .row = @intCast(total_height), .col = 0 },
                 .surface = try model.widget().draw(ctx.withConstraints(ctx.min, .{ .width = ctx.max.width.? - 3, .height = 1 })),
             });
 
-            total_height += surfaces.getLast().surface.size.height;
+            total_height += children.getLast().surface.size.height;
         }
 
         return .{
             .size = .{ .width = ctx.max.width.?, .height = @max(ctx.max.height.?, @as(u16, @intCast(total_height))) },
             .widget = self.widget(),
             .buffer = &.{},
-            .children = surfaces.items[0..total_height],
+            .children = children.items,
         };
     }
 };
@@ -208,6 +220,7 @@ pub const ModelRow = struct {
     record: Record,
     state: State,
     wrap_lines: bool = true,
+    selected: bool = false,
 
     pub fn widget(self: *ModelRow) vxfw.Widget {
         return .{
@@ -227,7 +240,7 @@ pub const ModelRow = struct {
         const seconds = @abs(@divFloor(milliseconds, std.time.ms_per_s));
         milliseconds = @mod(milliseconds, std.time.ms_per_s);
 
-        var children = std.ArrayList(vxfw.SubSurface).empty;
+        var children: std.ArrayList(vxfw.SubSurface) = .empty;
 
         var width: u16 = 0;
 
@@ -265,6 +278,7 @@ pub const ModelRow = struct {
                     .fg = .{
                         .index = if (self.record.rxOrTx == .RX) 7 else 6,
                     },
+                    .reverse = self.selected,
                 },
             }).widget().draw(ctx),
         });
@@ -283,7 +297,7 @@ pub const ModelRow = struct {
         // 9: ligher red or mod 8
 
         return .{
-            .size = .{ .width = width, .height = 1 },
+            .size = .{ .width = @max(width, 1), .height = 1 },
             .widget = self.widget(),
             .buffer = &.{},
             .children = children.items,
