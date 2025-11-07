@@ -10,6 +10,7 @@ const DropDown = @import("config_view.zig").DropDown;
 const utils = @import("serial");
 const builtin = @import("builtin");
 const zon = @import("build.zig.zon");
+const clap = @import("clap");
 
 var buffer: [1024 * 4]u8 = undefined;
 
@@ -25,11 +26,51 @@ pub fn main() !void {
 
     const allocator = gpa.allocator();
 
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help               Display help and exit.
+        \\-s, --serial <str>       Connect to a serial port [port:baud] or [port]
+        \\-t, --tcp <str>          Connect to a tcp address [X.X.X.X:port]
+        \\-u, --udp <str>          Connect to a UDP address [X.X.X.X:port]
+    );
+
+    var res = clap.parse(clap.Help, &params, clap.parsers.default, .{ .allocator = allocator }) catch |err| {
+        return err;
+    };
+
+    defer res.deinit();
+
+    var stdout_file = std.fs.File.stderr().writer(&.{});
+
+    if (res.args.help != 0) {
+        const writer = &stdout_file.interface;
+        try clap.help(writer, clap.Help, &params, .{});
+        return;
+    }
+    var cli = false;
+    var scfg: ?Serial.Options = null;
+    if (res.args.serial) |ser| {
+        scfg = .{};
+        var iter = std.mem.tokenizeScalar(u8, ser, ':');
+
+        scfg.?.port = iter.next().?;
+        const baud: u32 = std.fmt.parseInt(u32, iter.next() orelse "115200", 10) catch return error.InvalidBaudrate;
+        scfg.?.baudrate = std.enums.fromInt(Serial.Baudrates, baud) orelse return error.InvalidBaudrate;
+        cli = true;
+    }
+
+    var addr: ?std.net.Address = null;
+    if (res.args.tcp) |tcp_addr| {
+        addr = try std.net.Address.parseIpAndPort(tcp_addr);
+        cli = true;
+    }
+    if (res.args.udp) |udp_addr| {
+        addr = try std.net.Address.parseIpAndPort(udp_addr);
+        cli = true;
+    }
+
     var app = try vxfw.App.init(gpa.allocator());
     errdefer app.deinit();
-
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
+    defer app.deinit();
 
     const tui = try allocator.create(Tui.Tui);
     defer allocator.destroy(tui);
@@ -37,8 +78,14 @@ pub fn main() !void {
 
     tui.* = .{
         .allocator = allocator,
-        .serial = .{},
-        .net = .{},
+        .cli = cli,
+        .serial = .{
+            .config = scfg orelse .{},
+        },
+        .net = .{
+            .addr = addr,
+            .mode = if (res.args.udp != null) .UDP else .TCP,
+        },
         .send_view = .{
             .input = .{
                 .buf = vxfw.TextField.Buffer.init(allocator),
@@ -108,7 +155,6 @@ pub fn main() !void {
     }
 
     try app.run(tui.widget(), .{});
-    defer app.deinit();
     if (global_term) |term| {
         switch (term) {
             .Exited => |code| {
@@ -119,7 +165,6 @@ pub fn main() !void {
             else => {},
         }
     }
-
     var file = try std.fs.cwd().createFile(file_history, .{});
     defer file.close();
     var file_writer = file.writer(&.{});

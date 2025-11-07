@@ -81,6 +81,8 @@ pub const Tui = struct {
 
     bps: f32 = 0,
 
+    cli: bool = false,
+
     pub fn widget(self: *Tui) vxfw.Widget {
         return .{
             .userdata = self,
@@ -115,7 +117,17 @@ pub const Tui = struct {
 
                 ctx.consumeAndRedraw();
                 try self.send_view.handleEvent(ctx, .init);
-                return self.configuration_view.handleEvent(ctx, event);
+                try self.configuration_view.handleEvent(ctx, event);
+
+                if (self.cli) {
+                    self.cli = false;
+
+                    if (self.net.addr) |addr| {
+                        try self.openStream(.{ .net_cfg = .{ .addr = addr, .mode = self.net.mode } });
+                    } else {
+                        try self.openStream(.{ .ser_cfg = self.serial.config });
+                    }
+                }
             },
             .key_press => |key| {
                 if (key.matches(vaxis.Key.escape, .{})) {

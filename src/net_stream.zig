@@ -13,7 +13,7 @@ writer: std.net.Stream.Writer = undefined,
 is_open: bool = false,
 
 mode: NetMode = .TCP,
-addr: std.net.Address = .initIp4(.{ 127, 0, 0, 1 }, 65432),
+addr: ?std.net.Address = null,
 
 error_code: anyerror = error.None,
 
@@ -25,7 +25,7 @@ pub const NetMode = enum {
 pub fn getStatus(self: *NetStream, allocator: std.mem.Allocator) ![]const u8 {
     return if (self.is_open) try std.fmt.allocPrint(allocator, "{s} | Connected: {f}", .{
         @tagName(self.mode),
-        self.addr,
+        self.addr orelse std.net.Address.initIp4(.{ 0, 0, 0, 0 }, 0),
     }) else try std.fmt.allocPrint(allocator, "SERIAL | Disonnected | Error: {t}", .{self.error_code});
 }
 
@@ -50,6 +50,7 @@ pub fn connect(self: *NetStream, addr: std.net.Address, mode: NetMode) !void {
 pub fn close(self: *NetStream) void {
     self.stream.close();
     self.is_open = false;
+    self.addr = null;
 }
 
 pub fn getReaderInterface(self: *NetStream) *std.io.Reader {
