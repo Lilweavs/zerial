@@ -50,6 +50,8 @@ pub fn build(b: *std.Build) void {
     check_mod.addImport("vaxis", vaxis.module("vaxis"));
     check_mod.addImport("serial", serial.module("serial"));
 
+    const clap = b.dependency("clap", .{});
+    exe_mod.addImport("clap", clap.module("clap"));
     //create executable
     const exe = b.addExecutable(.{
         .name = "zerial",

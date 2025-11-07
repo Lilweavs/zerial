@@ -32,6 +32,10 @@
             .url = "git+https://github.com/JustinBraben/libvaxis.git#f586b69ae3cdada4ef697eb6612f2e3fb883eae6",
             .hash = "vaxis-0.5.1-BWNV_O8fCQAeUeVrESVc-2BdXloEXkFqReDJL7Q6XTSZ",
         },
+        .clap = .{
+            .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.11.0.tar.gz",
+            .hash = "clap-0.11.0-oBajB-HnAQDPCKYzwF7rO3qDFwRcD39Q0DALlTSz5H7e",
+        },
     },
     // This field is optional.
     // This is currently advisory only; Zig does not yet do anything
