@@ -4,17 +4,21 @@ const vxfw = vaxis.vxfw;
 const Allocator = std.mem.Allocator;
 
 pub const DropDown = struct {
-    list: std.ArrayList(vxfw.Text),
-    list_view: vxfw.ListView = .{ .children = .{ .builder = .{ .userdata = undefined, .buildFn = DropDown.widgetBuilder } } },
+    index: usize = 0,
+    list: [][]const u8 = &.{},
     description: ?[]const u8 = null,
+    is_focused: bool = false,
     is_expanded: bool = false,
-    in_focus: bool = false,
+    max_height: usize = 5,
 
     pub fn deinit(self: *DropDown, allocator: Allocator) void {
-        for (self.list.items) |text| {
-            allocator.free(text.text);
+        if (self.list.len > 0) {
+            for (self.list) |ptr| {
+                allocator.free(ptr);
+            }
+            allocator.free(self.list);
         }
-        self.list.deinit(allocator);
+        self.list = &.{};
     }
 
     pub fn widget(self: *DropDown) vxfw.Widget {
@@ -30,103 +34,85 @@ pub const DropDown = struct {
         return self.handleEvent(ctx, event);
     }
 
-    pub fn widgetBuilder(ptr: *const anyopaque, idx: usize, _: usize) ?vxfw.Widget {
-        const self: *const DropDown = @ptrCast(@alignCast(ptr));
-        if (idx >= self.list.items.len) return null;
-        return self.list.items[idx].widget();
-    }
-
-    pub fn handleEvent(self: *DropDown, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
-        switch (event) {
-            .focus_in => {
-                self.in_focus = true;
-                ctx.consumeAndRedraw();
-                return;
-            },
-            .focus_out => {
-                self.in_focus = false;
-                ctx.consumeAndRedraw();
-                return;
-            },
-            .key_press => |key| {
-                if (key.matches(vaxis.Key.escape, .{})) {
-                    self.is_expanded = false;
-                    ctx.consumeAndRedraw();
-                    return;
-                }
-
-                if (key.matches(vaxis.Key.enter, .{})) {
-                    self.is_expanded = !self.is_expanded;
-                    ctx.consumeAndRedraw();
-                    return;
-                }
-
-                if (self.is_expanded) {
-                    return self.list_view.handleEvent(ctx, event);
-                }
-            },
-            else => {},
-        }
-
-        return;
-    }
-
     pub fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
         const self: *DropDown = @ptrCast(@alignCast(ptr));
         return self.draw(ctx);
     }
 
+    pub fn handleEvent(self: *DropDown, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
+        switch (event) {
+            .key_press => |key| {
+                if (key.matches(vaxis.Key.escape, .{})) {
+                    self.is_expanded = false;
+                }
+                if (key.matches(vaxis.Key.enter, .{})) {
+                    self.is_expanded = !self.is_expanded;
+                }
+                if (self.is_expanded and key.matches('j', .{})) {
+                    self.index = @min(self.index + 1, self.list.len -| 1);
+                    ctx.consumeAndRedraw();
+                }
+                if (self.is_expanded and key.matches('k', .{})) {
+                    self.index -|= 1;
+                    ctx.consumeAndRedraw();
+                }
+                if (self.is_expanded and key.matches('>', .{})) {
+                    self.index = self.list.len -| 1;
+                    ctx.consumeAndRedraw();
+                }
+                if (self.is_expanded and key.matches('<', .{})) {
+                    self.index = 0;
+                    ctx.consumeAndRedraw();
+                }
+            },
+            else => {},
+        }
+        return;
+    }
+
     pub fn draw(self: *DropDown, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
-        // const children = try ctx.arena.alloc(vxfw.SubSurface, 1);
         var children: std.ArrayList(vxfw.SubSurface) = .empty;
 
-        var width: u16 = 0;
-        var height: u16 = 1;
-
-        const fudge: u16 = 3;
-
-        if (self.description) |description| {
-            try children.append(ctx.arena, .{
-                .origin = .{ .row = 0, .col = 0 },
-                .surface = try (vxfw.Text{
-                    .text = description,
-                }).widget().draw(ctx.withConstraints(ctx.min, .{ .width = @intCast(description.len), .height = 1 })),
-            });
-
-            width += children.getLast().surface.size.width + fudge;
-        }
+        var col: u16 = 0;
+        var row: u16 = 0;
 
         if (self.is_expanded) {
-            var max_list_length: u16 = 0;
-            for (self.list.items) |item| {
-                max_list_length = @max(max_list_length, @as(u16, @intCast(item.text.len)));
+            for (0..self.list.len) |i| {
+                try children.append(ctx.arena, .{
+                    .origin = .{ .row = @intCast(i), .col = 0 },
+                    .surface = try (vxfw.Text{ .text = self.list[i], .style = .{ .reverse = (i == self.index) } }).widget().draw(ctx),
+                });
+                col = @max(col, children.getLast().surface.size.width);
             }
-            try children.append(ctx.arena, vxfw.SubSurface{
-                .origin = .{ .row = 0, .col = width },
-                .surface = try self.list_view.draw(ctx.withConstraints(ctx.min, .{
-                    .width = max_list_length + 3,
-                    .height = if (self.list.items.len < 10) @intCast(self.list.items.len) else 10,
-                })),
-            });
-            width += children.getLast().surface.size.width;
-            height += children.getLast().surface.size.height;
+            row = @intCast(self.list.len);
         } else {
-            const text_len: u16 = @intCast(self.list.items[self.list_view.cursor].text.len);
-            try children.append(ctx.arena, .{
-                .origin = .{ .row = 0, .col = width },
-                .surface = try (vxfw.Text{
-                    .text = self.list.items[self.list_view.cursor].text,
-                    .style = .{ .reverse = self.in_focus },
-                }).widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = text_len, .height = 1 })),
-            });
-            width += text_len;
+            if (self.list.len == 0) {
+                try children.append(ctx.arena, .{
+                    .origin = .{ .row = 0, .col = 0 },
+                    .surface = try (vxfw.Text{
+                        .text = "-----",
+                        .style = .{ .reverse = (self.is_focused == true) },
+                    }).widget().draw(ctx),
+                });
+            } else {
+                try children.append(ctx.arena, .{
+                    .origin = .{ .row = 0, .col = 0 },
+                    .surface = try (vxfw.Text{
+                        .text = self.list[@min(self.index, self.list.len -| 1)],
+                        .style = .{ .reverse = (self.is_focused == true) },
+                    }).widget().draw(ctx),
+                });
+            }
+            row = 1;
+            col = @max(col, children.getLast().surface.size.width);
         }
+        // const fudge: u16 = 3;
 
-        const size = vxfw.Size{ .width = width, .height = height };
-        var surf = try vxfw.Surface.initWithChildren(ctx.arena, self.widget(), size, children.items);
-        if (!self.is_expanded and self.description != null) {
-            surf.writeCell(@intCast(self.description.?.len + 1), 0, .{ .char = .{ .grapheme = "▼", .width = 1 }, .style = .{} });
-        }
-        return surf;
+        return .{
+            .size = .{ .width = col, .height = row },
+            .widget = self.widget(),
+            .buffer = &.{},
+            .children = children.items,
+        };
     }
 };

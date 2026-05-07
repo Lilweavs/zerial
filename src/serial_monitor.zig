@@ -3,35 +3,26 @@ const vaxis = @import("vaxis");
 const Serial = @import("serial.zig");
 const CircularArray = @import("circular_array.zig");
 
+const Record = @import("record.zig");
+
 const Allocator = std.mem.Allocator;
 
 const vxfw = vaxis.vxfw;
 
-pub const Record = struct {
-    text: []const u8,
-    time: i64,
-    rxOrTx: RxOrTx,
-
-    pub const RxOrTx = enum {
-        RX,
-        TX,
-    };
-};
+const event_queue = @import("tui.zig").eventQueue();
 
 pub const State = enum {
     Ascii,
     Binary,
 };
 
-pub const SerialMonitor = struct {
+pub const StreamView = struct {
     index: usize = 0,
     hex_index: usize = 0,
 
-    allocator: Allocator,
-    data: CircularArray.CircularArray(Record),
-    hex_data: CircularArray.CircularArray(Record),
+    records: []Record = &.{},
     snap: SnapMode = .Bot,
-    view_state: State = .Ascii,
+    // view_state: State = .Ascii,
 
     top: usize = 0,
     bot: usize = 0,
@@ -42,74 +33,15 @@ pub const SerialMonitor = struct {
         Bot,
     };
 
-    pub fn widget(self: *SerialMonitor) vxfw.Widget {
+    pub fn widget(self: *StreamView) vxfw.Widget {
         return .{
             .userdata = self,
-            .eventHandler = SerialMonitor.typeErasedEventHandler,
-            .drawFn = SerialMonitor.typeErasedDrawFn,
+            .eventHandler = StreamView.typeErasedEventHandler,
+            .drawFn = StreamView.typeErasedDrawFn,
         };
     }
 
-    pub fn deinit(self: *SerialMonitor) void {
-        defer self.data.deinit();
-        defer self.hex_data.deinit();
-        while (self.data.popOrNull()) |ptr| {
-            self.allocator.free(ptr.text);
-        }
-        while (self.hex_data.popOrNull()) |ptr| {
-            self.allocator.free(ptr.text);
-        }
-    }
-
-    pub fn append(self: *SerialMonitor, record: Record) !void {
-        // check for old ascii data
-        if (self.data.getPtrOrNull(self.data.size -| 1)) |tail| {
-            if (record.rxOrTx != tail.rxOrTx) {
-                self.data.append(record);
-            } else {
-                // check if we need to append to row
-                const text = tail.text;
-                if (text[text.len - 1] != '\n') {
-                    tail.text = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ text, record.text });
-                    self.allocator.free(text);
-                } else {
-                    self.data.append(record);
-                }
-            }
-        } else {
-            self.data.append(record);
-        }
-
-        // check for old binary data
-        if (self.hex_data.getPtrOrNull(self.hex_data.size -| 1)) |tail| {
-            if (record.rxOrTx != tail.rxOrTx) {
-                try self.splitRecordHex(record, 32);
-            } else {
-                const hex = tail.text;
-                if (hex.len < 32) {
-                    const remaining = 32 - hex.len;
-
-                    if (record.text.len >= remaining) {
-                        tail.text = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ hex, record.text[0..remaining] });
-                        try self.splitRecordHex(.{
-                            .rxOrTx = record.rxOrTx,
-                            .text = record.text[remaining..],
-                            .time = record.time,
-                        }, 32);
-                    } else {
-                        tail.text = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ hex, record.text });
-                    }
-                    self.allocator.free(hex);
-                } else {
-                    try self.splitRecordHex(record, 32);
-                }
-            }
-        } else {
-            try self.splitRecordHex(record, 32);
-        }
-    }
-
-    fn splitRecordHex(self: *SerialMonitor, record: Record, hex_width: usize) !void {
+    fn splitRecordHex(self: *StreamView, record: Record, hex_width: usize) !void {
         var i: usize = 0;
         while (i + hex_width < record.text.len) : (i += hex_width) {
             self.hex_data.append(.{
@@ -125,35 +57,50 @@ pub const SerialMonitor = struct {
     }
 
     fn typeErasedEventHandler(ptr: *anyopaque, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
-        const self: *SerialMonitor = @ptrCast(@alignCast(ptr));
+        const self: *StreamView = @ptrCast(@alignCast(ptr));
         return self.handleEvent(ctx, event);
     }
 
-    pub fn handleEvent(self: *SerialMonitor, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
+    pub fn handleEvent(self: *StreamView, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
         switch (event) {
             .key_press => |key| {
                 if (key.matches('j', .{})) {
                     self.index += 1;
+                    if (self.index > self.records.len -| 1) {
+                        self.index = self.records.len -| 1;
+                        _ = try event_queue.tryPush(.ScrollDown);
+                    }
                 }
                 if (key.matches('k', .{})) {
-                    self.index -|= 1;
+                    if (self.index == 0) {
+                        _ = try event_queue.tryPush(.ScrollUp);
+                    } else self.index -= 1;
                 }
                 if (key.matches('j', .{ .shift = true })) {
                     self.index += 5;
+                    if (self.index > self.records.len -| 1) {
+                        self.index = self.records.len -| 1;
+                        for (0..5) |_| _ = try event_queue.tryPush(.ScrollDown);
+                    }
                 }
                 if (key.matches('k', .{ .shift = true })) {
-                    self.index -|= 5;
+                    if (self.index >= 5) {
+                        self.index -= 5;
+                    } else {
+                        for (0..5) |_| _ = try event_queue.tryPush(.ScrollUp);
+                        self.index = 0;
+                    }
                 }
                 if (key.matches('>', .{})) {
-                    self.snap = .Bot;
+                    // self.snap = .Bot;
                 }
                 if (key.matches('<', .{})) {
-                    self.snap = .Top;
+                    // self.snap = .Top;
                 }
                 if (key.matches('y', .{})) {
-                    if (self.data.size != 0) {
-                        try ctx.cmds.append(ctx.alloc, .{ .copy_to_clipboard = self.data.get(self.index).text });
-                    }
+                    // if (self.data.size != 0) {
+                    // try ctx.cmds.append(ctx.alloc, .{ .copy_to_clipboard = self.data.get(self.index).text });
+                    // }
                 }
                 ctx.consumeAndRedraw();
             },
@@ -163,143 +110,67 @@ pub const SerialMonitor = struct {
     }
 
     pub fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
-        const self: *SerialMonitor = @ptrCast(@alignCast(ptr));
+        const self: *StreamView = @ptrCast(@alignCast(ptr));
 
         var children: std.ArrayList(vxfw.SubSurface) = .empty;
 
-        var total_height: usize = 0;
+        var col: i17 = 0;
+        var row: i17 = 0;
 
-        const max_height = ctx.max.height.?;
+        self.index = @min(self.index, self.records.len -| 1);
 
-        switch (self.snap) {
-            .None => {},
-            .Bot => {
-                self.index = self.data.size -| 1;
-            },
-            .Top => {
-                self.index = 0;
-            },
-        }
-        self.snap = .None;
+        // std.log.info("size: {d}\n", .{self.records.len});
+        for (self.records, 0..) |record, i| {
+            var milliseconds = @mod(record.time, std.time.ms_per_day);
+            const hours = @abs(@divFloor(milliseconds, std.time.ms_per_hour));
+            milliseconds = @mod(milliseconds, std.time.ms_per_hour);
+            const mins = @abs(@divFloor(milliseconds, std.time.ms_per_min));
+            milliseconds = @mod(milliseconds, std.time.ms_per_min);
+            const seconds = @abs(@divFloor(milliseconds, std.time.ms_per_s));
+            milliseconds = @mod(milliseconds, std.time.ms_per_s);
 
-        if (self.index < self.top) {
-            self.top = self.index;
-            self.bot = @min(self.top + max_height, self.data.size) -| 1;
-        }
+            const text = try ctx.arena.dupe(u8, record.text);
 
-        if (self.index > self.bot) {
-            self.index = @min(self.index, self.data.size -| 1);
-            self.bot = self.index;
-            self.top = self.bot -| (max_height - 1);
-        }
-
-        if (self.top != self.bot) {
-            for (self.top..self.bot + 1) |i| {
-                var model: ModelRow = .{
-                    .record = if (self.view_state == .Ascii) self.data.get(i) else self.hex_data.get(i),
-                    .state = self.view_state,
-                    .selected = (i == self.index),
-                };
-
-                try children.append(ctx.arena, vxfw.SubSurface{
-                    .origin = .{ .row = @intCast(total_height), .col = 0 },
-                    .surface = try model.widget().draw(ctx.withConstraints(ctx.min, .{ .width = ctx.max.width.? - 3, .height = 1 })),
-                });
-                total_height += 1;
-            }
-        }
-
-        return .{
-            .size = .{ .width = ctx.max.width.?, .height = max_height },
-            .widget = self.widget(),
-            .buffer = &.{},
-            .children = children.items,
-        };
-    }
-};
-
-pub const ModelRow = struct {
-    record: Record,
-    state: State,
-    wrap_lines: bool = true,
-    selected: bool = false,
-
-    pub fn widget(self: *ModelRow) vxfw.Widget {
-        return .{
-            .userdata = self,
-            .drawFn = ModelRow.typeErasedDrawFn,
-        };
-    }
-
-    fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
-        const self: *ModelRow = @ptrCast(@alignCast(ptr));
-
-        var milliseconds = @mod(self.record.time, std.time.ms_per_day);
-        const hours = @abs(@divFloor(milliseconds, std.time.ms_per_hour));
-        milliseconds = @mod(milliseconds, std.time.ms_per_hour);
-        const mins = @abs(@divFloor(milliseconds, std.time.ms_per_min));
-        milliseconds = @mod(milliseconds, std.time.ms_per_min);
-        const seconds = @abs(@divFloor(milliseconds, std.time.ms_per_s));
-        milliseconds = @mod(milliseconds, std.time.ms_per_s);
-
-        var children: std.ArrayList(vxfw.SubSurface) = .empty;
-
-        var width: u16 = 0;
-
-        var text: []const u8 = undefined;
-        if (self.state == .Binary) {
-            const tmp = try ctx.arena.alloc(u8, self.record.text.len * 3);
-            for (0..self.record.text.len) |i| {
-                if (std.fmt.bufPrint(tmp[i * 3 .. (i + 1) * 3], "{X:0>2} ", .{self.record.text[i]})) |_| {} else |_| {}
-            }
-            text = tmp;
-        } else {
-            text = self.record.text;
-        }
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = 0, .col = 0 },
-            .surface = try (vxfw.Text{
-                .text = try std.fmt.allocPrint(ctx.arena, "{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3} >", .{ hours, mins, seconds, @as(usize, @intCast(milliseconds)) }),
-                .style = .{
-                    .fg = .{
-                        .rgb = .{ 255, 255, 0 },
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = row, .col = col },
+                .surface = try (vxfw.Text{
+                    .text = try std.fmt.allocPrint(
+                        ctx.arena,
+                        "{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3} >",
+                        .{
+                            hours, mins, seconds, @as(usize, @intCast(milliseconds)),
+                        },
+                    ),
+                    .style = .{
+                        .fg = .{
+                            .rgb = .{ 255, 255, 0 },
+                        },
                     },
-                },
-            }).widget().draw(ctx),
-        });
+                }).widget().draw(ctx),
+            });
 
-        width += children.getLast().surface.size.width;
+            col += children.getLast().surface.size.width;
 
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = 0, .col = width },
-            .surface = try (vxfw.Text{
-                .text = text,
-                .softwrap = false,
-                .style = .{
-                    .fg = .{
-                        .index = if (self.record.rxOrTx == .RX) 7 else 6,
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = row, .col = col },
+                .surface = try (vxfw.Text{
+                    .text = text,
+                    .softwrap = false,
+                    .style = .{
+                        .fg = .{
+                            .index = if (record.rxOrTx == .RX) 7 else 6,
+                        },
+                        .reverse = self.index == i,
                     },
-                    .reverse = self.selected,
-                },
-            }).widget().draw(ctx),
-        });
+                }).widget().draw(ctx),
+            });
 
-        width += children.getLast().surface.size.width;
-
-        // 0: black
-        // 1: red
-        // 2: green
-        // 3: orange?
-        // 4: blue
-        // 5: purple
-        // 6: cyan
-        // 7: default/white
-        // 8: grey
-        // 9: ligher red or mod 8
+            row += children.getLast().surface.size.height;
+            col = 0;
+        }
 
         return .{
-            .size = .{ .width = @max(width, 1), .height = 1 },
+            .size = .{ .width = ctx.max.width.?, .height = @intCast(row) },
             .widget = self.widget(),
             .buffer = &.{},
             .children = children.items,

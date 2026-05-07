@@ -1,20 +1,75 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const utils = @import("serial");
-const File = std.fs.File;
+const File = std.Io.File;
 const Serial = @This();
+const Stream = @import("tui.zig").Stream;
+const Allocator = std.mem.Allocator;
+// is_open: bool = false,
+// mutex: std.Thread.Mutex = .{},
 
-file: ?File = null,
-is_open: bool = false,
-mutex: std.Thread.Mutex = .{},
+// config: Options = .{},
 
-reader: ?File.Reader = null,
-writer: ?File.Writer = null,
+port: File,
+// fh: std.Io.File.Handle,
+const Self = @This();
 
-config: Options = .{},
-port_buffer: [256]u8 = undefined,
+var options = Options{};
 
-error_code: anyerror = error.None,
+pub fn openStream(io: std.Io, allocator: Allocator, opts: Options) !Stream {
+    const serial = try allocator.create(Self);
+    errdefer allocator.destroy(serial);
+    serial.* = .{
+        .port = std.Io.Dir.openFileAbsolute(io, opts.port, .{ .mode = .read_write }) catch |err| return err,
+    };
+
+    try utils.configureSerialPort(serial.port, .{ .baud_rate = @intFromEnum(opts.baudrate), .parity = opts.parity, .stop_bits = opts.stopbits, .word_size = opts.wordsize });
+    options = opts;
+    return .{
+        .ctx = serial,
+        .readFn = read,
+        .writeFn = write,
+        .closeFn = close,
+        .statusFn = status,
+    };
+}
+
+// pub fn stream(self: *Self) Stream {
+//     return .{
+//         .ctx = self,
+//         .readFn = read,
+//         .writeFn = write,
+//     };
+// }
+
+fn read(ctx: *anyopaque, io: std.Io, buf: []u8) !usize {
+    const self: *Self = @ptrCast(@alignCast(ctx));
+    const list: []const []u8 = &.{buf};
+    // var reader = self.port.readerStreaming(io, buf);
+    // const b = try reader.interface.takeByte();
+    // buf[0] = b;
+    // return 1;
+    return try self.port.readStreaming(io, list);
+}
+
+fn write(ctx: *anyopaque, io: std.Io, buf: []const u8) !usize {
+    const self: *Self = @ptrCast(@alignCast(ctx));
+    _ = io;
+    _ = self;
+    _ = buf;
+    return 0;
+}
+
+fn close(ctx: *anyopaque, io: std.Io, allocator: Allocator) void {
+    const self: *Self = @ptrCast(@alignCast(ctx));
+    self.port.close(io);
+    allocator.destroy(self);
+}
+
+fn status(ctx: *anyopaque, allocator: Allocator) anyerror![]const u8 {
+    _ = ctx;
+    return try std.fmt.allocPrint(allocator, "Connected: {s} @ {d}", .{ options.port, @intFromEnum(options.baudrate) });
+}
 
 pub const Baudrates = enum(u32) {
     b115200 = 115200,
@@ -35,28 +90,28 @@ pub const Options = struct {
     stopbits: utils.StopBits = .one,
 };
 
-pub fn getReaderInterface(self: *Serial) ?*std.Io.Reader {
-    return if (self.reader) |*reader| &reader.interface else null;
-}
+// pub fn getReaderInterface(self: *Serial) ?*std.Io.Reader {
+//     return if (self.reader) |*reader| &reader.interface else null;
+// }
 
-pub fn getWriterInterface(self: *Serial) ?*std.Io.Writer {
-    return if (self.writer) |*writer| &writer.interface else null;
-}
+// pub fn getWriterInterface(self: *Serial) ?*std.Io.Writer {
+//     return if (self.writer) |*writer| &writer.interface else null;
+// }
 
-pub fn getStatus(self: Serial, allocator: std.mem.Allocator) ![]const u8 {
-    return if (self.is_open)
-        try std.fmt.allocPrint(allocator, "SERIAL | Connected: {s} @ {d} {d}{c}{d}", .{
-            self.config.port,
-            @intFromEnum(self.config.baudrate),
-            @intFromEnum(self.config.wordsize),
-            @intFromEnum(self.config.parity),
-            @intFromEnum(self.config.stopbits),
-        })
-    else
-        try std.fmt.allocPrint(allocator, "SERIAL | Disonnected | Error: {t}", .{
-            self.error_code,
-        });
-}
+// pub fn getStatus(self: Serial, allocator: std.mem.Allocator) ![]const u8 {
+//     return if (self.is_open)
+//         try std.fmt.allocPrint(allocator, "SERIAL | Connected: {s} @ {d} {d}{c}{d}", .{
+//             self.config.port,
+//             @intFromEnum(self.config.baudrate),
+//             @intFromEnum(self.config.wordsize),
+//             @intFromEnum(self.config.parity),
+//             @intFromEnum(self.config.stopbits),
+//         })
+//     else
+//         try std.fmt.allocPrint(allocator, "SERIAL | Disonnected | Error: {t}", .{
+//             self.error_code,
+//         });
+// }
 
 pub fn openWithConfiguration(self: *Serial, opts: Options) !void {
     if (self.is_open) {
@@ -126,10 +181,10 @@ pub fn deinit(self: *Serial) void {
     self.close();
 }
 
-pub fn close(self: *Serial) void {
-    if (self.file) |ptr| {
-        self.is_open = false;
-        ptr.close();
-    }
-    self.is_open = false;
-}
+// pub fn close(self: *Serial) void {
+//     if (self.file) |ptr| {
+//         self.is_open = false;
+//         ptr.close();
+//     }
+//     self.is_open = false;
+// }

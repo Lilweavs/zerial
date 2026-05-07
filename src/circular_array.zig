@@ -13,6 +13,30 @@ pub fn CircularArray(comptime T: type) type {
         tail: usize = 0,
         size: usize = 0,
 
+        const Iterator = struct {
+            head: usize,
+            tail: usize,
+            capacity: usize,
+            data: []T,
+
+            pub fn next(it: *Iterator) ?T {
+                if (it.head == it.tail) return null;
+                const head = it.head;
+                it.head = (it.head + 1) % it.capacity;
+                return it.data[head];
+            }
+        };
+
+        pub fn iterator(a: *const Self, offset: usize) Iterator {
+            const head = if (offset > a.size) a.head else (a.tail + (a.capacity - offset)) % a.capacity;
+            return .{
+                .head = head,
+                .tail = a.tail,
+                .data = a.data,
+                .capacity = a.capacity,
+            };
+        }
+
         pub fn initCapacity(allocator: Allocator, max_size: usize) !Self {
             return .{
                 .allocator = allocator,
@@ -35,26 +59,26 @@ pub fn CircularArray(comptime T: type) type {
             self.tail = 0;
         }
 
-        pub fn append(self: *Self, item: T) void {
+        /// returns T if an object was overwritten
+        pub fn pushDropOldest(self: *Self, item: T) ?T {
             // if we are full we need to deallocate the previous record
+            var stale: ?T = null;
             if (self.capacity == self.size) {
-                if (T == @import("serial_monitor.zig").Record) {
-                    const stale_data = self.data[self.head];
-                    self.allocator.free(stale_data.text);
-                }
-                self.increamentHead();
+                stale = self.data[self.head];
+                self.incrementHead();
             }
 
             self.data[self.tail] = item;
-            self.increamentTail();
+            self.incrementTail();
+            return stale;
         }
 
-        fn increamentHead(self: *Self) void {
+        fn incrementHead(self: *Self) void {
             self.head = (self.head + 1) % self.capacity;
             self.size -= 1;
         }
 
-        fn increamentTail(self: *Self) void {
+        fn incrementTail(self: *Self) void {
             self.tail = (self.tail + 1) % self.capacity;
             self.size += 1;
         }
@@ -62,25 +86,27 @@ pub fn CircularArray(comptime T: type) type {
         pub fn popOrNull(self: *Self) ?T {
             if (self.size == 0) return null;
             const prev_head = self.head;
-            self.increamentHead();
+            self.incrementHead();
             return self.data[prev_head];
         }
 
         pub fn get(self: Self, index: usize) T {
+            std.debug.assert(index < self.size);
             return self.data[(self.head + index) % self.capacity];
         }
 
         pub fn getOrNull(self: Self, index: usize) ?T {
-            if (self.size == 0) return null;
+            if (self.size == 0 or index >= self.size) return null;
             return self.get(index);
         }
 
         pub fn getPtr(self: Self, index: usize) *T {
+            std.debug.assert(index < self.size);
             return &self.data[(self.head + index) % self.capacity];
         }
 
         pub fn getPtrOrNull(self: Self, index: usize) ?*T {
-            if (self.size == 0) return null;
+            if (self.size == 0 or index >= self.size) return null;
             return self.getPtr(index);
         }
     };
