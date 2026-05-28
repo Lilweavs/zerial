@@ -4,13 +4,19 @@ const DropDown = @import("dropdown.zig").DropDown;
 const Allocator = std.mem.Allocator;
 const HorizontalLine = @import("HorizontalLine.zig").HorizontalLine;
 const vxfw = vaxis.vxfw;
+const fuzz = @import("fuzzy.zig");
+
+const event_queue = @import("tui.zig").eventQueue();
 
 pub const SendView = struct {
     input: vxfw.TextField,
-    history_visible: bool = false,
-    history_list: DropDown,
-    write_queue: *vaxis.Queue([]const u8, 32),
+    show_history: bool = false,
+    drop_down: DropDown = .{},
+    history_list: [][]const u8 = &.{},
+    filtered_list: std.ArrayList([]const u8) = .empty,
+    write_queue: *vaxis.Queue([]const u8, 8) = undefined,
     delimiter: Delimiter = .CRLF,
+    allocator: Allocator,
 
     const Delimiter = enum(u2) {
         NONE,
@@ -30,7 +36,9 @@ pub const SendView = struct {
 
     pub fn deinit(self: *SendView, allocator: Allocator) void {
         self.input.deinit();
-        self.history_list.deinit(allocator);
+        self.drop_down.list = self.history_list;
+        self.drop_down.deinit(allocator);
+        self.filtered_list.deinit(allocator);
     }
 
     pub fn widget(self: *SendView) vxfw.Widget {
@@ -49,11 +57,22 @@ pub const SendView = struct {
     pub fn handleEvent(self: *SendView, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
         switch (event) {
             .init => {
-                self.history_list.list_view.children.builder.userdata = &self.history_list;
+                self.input.userdata = self;
+                self.input.onChange = onChange;
+                self.drop_down.list = self.history_list;
             },
             .key_press => |key| {
+                if (key.matches(vaxis.Key.escape, .{})) {
+                    _ = try event_queue.tryPush(.Home);
+                    return;
+                }
+
+                if (key.matches(vaxis.Key.backspace, .{ .ctrl = true })) {
+                    self.input.deleteToStart();
+                }
+
                 if (key.matches('h', .{ .ctrl = true })) {
-                    self.history_visible = !self.history_visible;
+                    self.show_history = !self.show_history;
                     return ctx.consumeAndRedraw();
                 }
 
@@ -61,43 +80,49 @@ pub const SendView = struct {
                     var i: u2 = @intFromEnum(self.delimiter);
                     i +%= 1;
                     self.delimiter = @enumFromInt(i);
-                    // self.history_visible = !self.history_visible;
                     return ctx.consumeAndRedraw();
                 }
 
-                if (self.history_visible) {
-                    if (key.matches(vaxis.Key.enter, .{})) {
-                        if (self.history_list.list.items.len == 0) return;
+                if (self.show_history) {
+                    if (key.matches(vaxis.Key.enter, .{ .ctrl = true })) {
+                        if (self.drop_down.list.items.len == 0) return;
 
-                        const to_send = self.history_list.list.items[self.history_list.list_view.cursor].text;
+                        const to_send = self.drop_down.list[self.drop_down.index];
 
-                        _ = self.write_queue.tryPush(try std.fmt.allocPrint(ctx.alloc, "{s}{s}", .{ to_send, getDelimiter(self.delimiter) }));
+                        _ = try self.write_queue.tryPush(try std.fmt.allocPrint(ctx.alloc, "{s}{s}", .{ to_send, getDelimiter(self.delimiter) }));
                         return ctx.consumeAndRedraw();
                     }
 
-                    if (key.matches('d', .{})) {
-                        if (self.history_list.list.items.len == 0) return;
-
-                        const ptr = self.history_list.list.orderedRemove(self.history_list.list_view.cursor);
-                        defer ctx.alloc.free(ptr.text);
-                        if (self.history_list.list_view.cursor > self.history_list.list.items.len) {
-                            self.history_list.list_view.cursor -|= 1;
-                        }
-                        return ctx.consumeAndRedraw();
+                    if (key.matches('j', .{ .ctrl = true })) {
+                        return try self.drop_down.handleEvent(ctx, .{ .key_press = .{ .codepoint = 'j' } });
+                    }
+                    if (key.matches('k', .{ .ctrl = true })) {
+                        return try self.drop_down.handleEvent(ctx, .{ .key_press = .{ .codepoint = 'k' } });
                     }
 
-                    if (key.matches('e', .{})) {
-                        if (self.history_list.list.items.len == 0) return;
+                    if (key.matches('d', .{ .ctrl = true })) {
+                        // if (self.history_list.list.items.len == 0) return;
+                        // const ptr = self.history_list.list.orderedRemove(self.history_list.list_view.cursor);
+                        // defer ctx.alloc.free(ptr.text);
+                        // if (self.history_list.list_view.cursor > self.history_list.list.items.len) {
+                        //     self.history_list.list_view.cursor -|= 1;
+                        // }
+                        // return ctx.consumeAndRedraw();
+                    }
 
-                        const item = self.history_list.list.items[self.history_list.list_view.cursor];
+                    if (key.matches('e', .{ .ctrl = true })) {
+                        if (self.drop_down.list.len == 0) return;
+
+                        const item = self.drop_down.list[self.drop_down.index];
                         self.input.clearAndFree();
-                        try self.input.insertSliceAtCursor(item.text);
-                        self.history_visible = false;
+                        try self.input.insertSliceAtCursor(item);
+                        // self.history_visible = false;
 
                         return ctx.consumeAndRedraw();
                     }
 
-                    return self.history_list.handleEvent(ctx, event);
+                    // return self.history_list.handleEvent(ctx, event);
+                    return self.input.handleEvent(ctx, event);
                 } else {
                     defer {
                         if (key.matches(vaxis.Key.enter, .{})) {
@@ -121,15 +146,34 @@ pub const SendView = struct {
     pub fn onSubmit(ptr: ?*anyopaque, ctx: *vxfw.EventContext, str: []const u8) anyerror!void {
         const self: *SendView = @ptrCast(@alignCast(ptr));
 
-        for (self.history_list.list.items) |item| {
-            if (std.mem.eql(u8, item.text, str)) {
-                break;
-            }
-        } else try self.history_list.list.append(ctx.alloc, .{
-            .text = try ctx.alloc.dupe(u8, str),
-        });
+        // for (self.history_list.list.items) |item| {
+        //     if (std.mem.eql(u8, item.text, str)) {
+        //         break;
+        //     }
+        // } else try self.history_list.list.append(ctx.alloc, .{
+        //     .text = try ctx.alloc.dupe(u8, str),
+        // });
 
-        _ = self.write_queue.tryPush(try std.fmt.allocPrint(ctx.alloc, "{s}{s}", .{ str, getDelimiter(self.delimiter) }));
+        _ = try self.write_queue.tryPush(try std.fmt.allocPrint(ctx.alloc, "{s}{s}", .{ str, getDelimiter(self.delimiter) }));
+
+        return ctx.consumeAndRedraw();
+    }
+
+    pub fn onChange(ptr: ?*anyopaque, ctx: *vxfw.EventContext, str: []const u8) anyerror!void {
+        const self: *SendView = @ptrCast(@alignCast(ptr));
+        if (self.show_history) {
+            if (str.len > 0) {
+                const filtered = try fuzz.fuzzList(self.history_list, str, ctx.alloc);
+                defer ctx.alloc.free(filtered);
+                self.filtered_list.clearRetainingCapacity();
+                for (filtered) |item| {
+                    try self.filtered_list.append(self.allocator, self.history_list[item.idx]);
+                }
+                self.drop_down.list = self.filtered_list.items;
+            } else {
+                self.drop_down.list = self.history_list;
+            }
+        }
 
         return ctx.consumeAndRedraw();
     }
@@ -167,15 +211,16 @@ pub const SendView = struct {
         });
         width += children.getLast().surface.size.width;
 
-        if (self.history_visible) {
+        if (self.show_history) {
             try children.append(ctx.arena, .{ .origin = .{ .row = 1, .col = 0 }, .surface = try (HorizontalLine{ .label = .{ .text = "History", .alignment = .center } }).widget().draw(ctx.withConstraints(ctx.min, ctx.max)) });
             height = 2;
 
-            self.history_list.is_expanded = true;
+            self.drop_down.is_expanded = true;
 
             try children.append(ctx.arena, .{
                 .origin = .{ .row = height, .col = 0 },
-                .surface = try self.history_list.widget().draw(ctx.withConstraints(.{ .width = ctx.max.width.? - 5, .height = 1 }, ctx.max)),
+                // .surface = try self.drop_down.widget().draw(ctx.withConstraints(.{ .width = ctx.max.width.? - 5, .height = 1 }, ctx.max)),
+                .surface = try self.drop_down.widget().draw(ctx),
             });
 
             // width += children.getLast().surface.size.width;

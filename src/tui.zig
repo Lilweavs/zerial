@@ -108,7 +108,7 @@ pub const Tui = struct {
 
     // Views
     stream_view: StreamView,
-    // send_view: SendView,
+    send_view: SendView,
     // help_view: HelpView,
     config_view: ConfigView,
 
@@ -154,10 +154,26 @@ pub const Tui = struct {
             .config_view = .{
                 .allocator = allocator,
             },
+            .send_view = .{
+                .input = .{
+                    .buf = .init(allocator),
+                },
+                .allocator = allocator,
+            },
             .records = try RecordArray.initCapacity(allocator, 1024),
             .read_queue = .init(io),
             .write_queue = .init(io),
         };
+        self.send_view.write_queue = &self.write_queue;
+        var arr: std.ArrayList([]const u8) = try .initCapacity(self.allocator, 5);
+        try arr.appendSlice(allocator, &.{
+            try allocator.dupe(u8, "eth remote 192.168.1.1"),
+            try allocator.dupe(u8, "eth stats"),
+            try allocator.dupe(u8, "eth info"),
+            try allocator.dupe(u8, "adc info"),
+            try allocator.dupe(u8, "adc on"),
+        });
+        self.send_view.history_list = try arr.toOwnedSlice(allocator);
     }
 
     pub fn deinit(self: *Tui) void {
@@ -174,6 +190,7 @@ pub const Tui = struct {
         }
 
         self.config_view.deinit(self.allocator);
+        self.send_view.deinit(self.allocator);
     }
 
     fn typeErasedEventHandler(ptr: *anyopaque, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
@@ -185,6 +202,7 @@ pub const Tui = struct {
         switch (event) {
             .init => {
                 try self.config_view.handleEvent(ctx, event);
+                try self.send_view.handleEvent(ctx, event);
                 try ctx.tick(std.time.ms_per_s / 60, self.widget());
             },
             .tick => {
@@ -237,16 +255,22 @@ pub const Tui = struct {
                         try self.config_view.handleEvent(ctx, event);
                         return ctx.consumeAndRedraw();
                     },
+                    .SendView => {
+                        try self.send_view.handleEvent(ctx, event);
+                        return ctx.consumeAndRedraw();
+                    },
                     else => {
                         if (key.matches('o', .{ .ctrl = true })) {
                             self.closeStream();
                             return;
                         }
+                        if (key.matches(':', .{})) {
+                            self.state = .SendView;
+                        }
                         if (key.matches('o', .{})) {
                             self.state = .Configuration;
                             self.deinitDropDown();
                             self.config_view.port_dropdown.list = try enumerateSerialPorts(self.io, self.allocator);
-                            return ctx.consumeAndRedraw();
                         }
                     },
                 }
@@ -278,7 +302,7 @@ pub const Tui = struct {
 
         self.stream_view.records = viewable.items;
 
-        const up_time_str = try std.fmt.allocPrint(ctx.arena, "UpTime: {d:.1} |", .{
+        const up_time_str = try std.fmt.allocPrint(ctx.arena, "Up Time: {d:.1}", .{
             if (self.stream_status == .Open)
                 @as(f64, @floatFromInt(self.up_time.untilNow(self.io, .awake).toMilliseconds())) / 1000
             else
@@ -328,6 +352,13 @@ pub const Tui = struct {
                         },
                     },
                 }).widget().draw(ctx.withConstraints(.{ .width = 15 }, ctx.max)),
+            });
+        } else if (self.state == .SendView) {
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = ctx.max.height.? / 4, .col = ctx.max.width.? / 2 -| ctx.max.width.? / 4 },
+                .surface = try (vxfw.Border{
+                    .child = self.send_view.widget(),
+                }).widget().draw(ctx.withConstraints(ctx.min, .{ .width = ctx.max.width.? / 2 })),
             });
         }
 
