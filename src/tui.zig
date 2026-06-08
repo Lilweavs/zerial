@@ -1,8 +1,7 @@
 const std = @import("std");
 const vaxis = @import("vaxis");
-const Serial = @import("serial.zig");
-const NetStream = @import("net_stream.zig");
 
+const Serial = @import("serial.zig");
 const Record = @import("record.zig");
 const CircularArray = @import("circular_array.zig").CircularArray;
 const RecordArray = CircularArray(Record);
@@ -14,7 +13,6 @@ const Allocator = std.mem.Allocator;
 const vxfw = vaxis.vxfw;
 
 var rx_buffer: [1024 * 32]u8 = undefined;
-var tx_buffer: [1024 * 32]u8 = undefined;
 
 pub const Stream = struct {
     ctx: *anyopaque,
@@ -47,42 +45,9 @@ const ZerialState = enum {
     Configuration,
 };
 
-fn zerialStateToString(state: ZerialState) []const u8 {
-    return switch (state) {
-        .Home => "VIEW",
-        .SendView => "SEND",
-        .Configuration => "CONFIG",
-    };
-}
-
-fn zerialStateToColor(state: ZerialState) u8 {
-    return switch (state) {
-        .Home => 0,
-        .SendView => 1,
-        .Configuration => 2,
-    };
-}
-
-const StatusLineData = struct {
-    port: []const u8 = "",
-    baudrate: u32 = 115200,
-    is_open: bool = false,
-    bandwidth: u8 = 0,
-    bps: u32 = 0,
-};
-
 const ConfigView = @import("config_view.zig").ConfigView;
 const StreamView = @import("serial_monitor.zig").StreamView;
 const SendView = @import("send_view.zig").SendView;
-
-pub const SerialStream = union(enum) {
-    Serial,
-    NetStream,
-};
-
-// serial: Serial,
-// net: NetStream,
-// stream_mode: SerialStream = .Serial,
 
 const TuiEvent = enum {
     ScrollUp,
@@ -106,19 +71,14 @@ pub const Tui = struct {
     allocator: Allocator,
     io: std.Io,
 
-    // Views
     stream_view: StreamView,
     send_view: SendView,
-    // help_view: HelpView,
     config_view: ConfigView,
 
     stream: ?Stream = null,
     stream_status: enum(u8) { Open, Closed } = .Closed,
 
     records: RecordArray,
-
-    status_line: StatusLineData = .{},
-    refresh: bool = false,
 
     state: ZerialState = .Home,
 
@@ -131,9 +91,6 @@ pub const Tui = struct {
     last_error: ?anyerror = null,
 
     up_time: std.Io.Timestamp = .zero,
-    bps: f32 = 0,
-
-    cli: bool = false,
 
     ascii_offset: usize = 10,
     max_lines: usize = 1,
@@ -274,7 +231,6 @@ pub const Tui = struct {
                         }
                     },
                 }
-
                 _ = try self.stream_view.handleEvent(ctx, event);
             },
             else => {},
@@ -392,81 +348,6 @@ pub const Tui = struct {
         self.config_view.port_dropdown.list = &.{};
     }
 
-    // const surf = vxfw.Surface.initWithChildren(ctx.arena, self.widget(), max, children.items);
-
-    // var buf = try ctx.arena.alloc(vxfw.Ce)
-    // return surf;
-    // try children.append(
-    //     ctx.arena,
-    //     .{
-    //         .origin = .{ .row = 0, .col = 0 },
-    //         .surface = try (vxfw.Border{
-    //             .child = (vxfw.FlexRow{
-    //                 .children = &.{
-    //                     vxfw.FlexItem{
-    //                         .widget = (vxfw.Text{
-    //                             .text = try std.fmt.allocPrint(ctx.arena, "{s} | {d}bps", .{
-    //                                 if (self.stream_mode == .Serial) try self.serial.getStatus(ctx.arena) else try self.net.getStatus(ctx.arena),
-    //                                 @as(u32, @intFromFloat(self.bps)),
-    //                             }),
-    //                         }).widget(),
-    //                         .flex = 0,
-    //                     },
-    //                     vxfw.FlexItem{
-    //                         .widget = (vxfw.Text{
-    //                             .text = "",
-    //                         }).widget(),
-    //                         .flex = 1,
-    //                     },
-    //                 },
-    //             }).widget(),
-    //         }).draw(ctx.withConstraints(ctx.min, .{ .height = 3, .width = max.width })),
-    //     },
-    // );
-
-    // try children.append(ctx.arena, .{
-    //     .origin = .{
-    //         .row = 3,
-    //         .col = 0,
-    //     },
-    //     .surface = try (vxfw.Border{
-    //         .child = self.serial_monitor.widget(),
-    //     }).draw(ctx.withConstraints(ctx.min, .{ .width = max.width, .height = max.height - 3 })),
-    // });
-
-    // if (self.state == .SendView) {
-    //     try children.append(
-    //         ctx.arena,
-    //         .{ .origin = .{
-    //             .row = 10,
-    //             .col = max.width / 4,
-    //         }, .surface = try (vxfw.Border{
-    //             .child = self.send_view.widget(),
-    //             .labels = &[_]vxfw.Border.BorderLabel{.{
-    //                 .text = "Send View",
-    //                 .alignment = .top_center,
-    //             }},
-    //         }).draw(ctx.withConstraints(ctx.min, .{ .width = max.width / 2, .height = 10 })) },
-    //     );
-    // }
-
-    // if (self.state == .Configuration) {
-    //     try children.append(ctx.arena, .{
-    //         .origin = .{
-    //             .row = (max.height - ConfigModel.size.height) / 2 - 5,
-    //             .col = (max.width - ConfigModel.size.width) / 2,
-    //         },
-    //         .surface = try (vxfw.Border{
-    //             .child = self.configuration_view.widget(),
-    //             .labels = &[_]vxfw.Border.BorderLabel{.{
-    //                 .text = "Port Configuration",
-    //                 .alignment = .top_center,
-    //             }},
-    //         }).widget().draw(ctx),
-    //     });
-    // }
-    // }
-
     /// records are gauranteed to not have multiple new lines. They will either be
     /// 1. msg
     /// 2. msg + \n
@@ -484,87 +365,14 @@ pub const Tui = struct {
         } else {
             if (self.records.pushDropOldest(record)) |r| self.allocator.free(r.text);
         }
-
-        // check for old binary data
-        // if (self.hex_data.getPtrOrNull(self.hex_data.size -| 1)) |tail| {
-        //     if (record.rxOrTx != tail.rxOrTx) {
-        //         try self.splitRecordHex(record, 32);
-        //     } else {
-        //         const hex = tail.text;
-        //         if (hex.len < 32) {
-        //             const remaining = 32 - hex.len;
-
-        //             if (record.text.len >= remaining) {
-        //                 tail.text = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ hex, record.text[0..remaining] });
-        //                 try self.splitRecordHex(.{
-        //                     .rxOrTx = record.rxOrTx,
-        //                     .text = record.text[remaining..],
-        //                     .time = record.time,
-        //                 }, 32);
-        //             } else {
-        //                 tail.text = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ hex, record.text });
-        //             }
-        //             self.allocator.free(hex);
-        //         } else {
-        //             try self.splitRecordHex(record, 32);
-        //         }
-        //     }
-        // } else {
-        //     try self.splitRecordHex(record, 32);
-        // }
-    }
-
-    const Options = @import("serial.zig").Options;
-
-    const StreamConfig = union(enum) {
-        ser_cfg: Options,
-        net_cfg: NetConfig,
-    };
-
-    const NetConfig = struct {
-        addr: std.net.Address,
-        mode: NetStream.NetMode,
-    };
-
-    pub fn openStream(self: *Tui, config: StreamConfig) !void {
-        switch (config) {
-            .ser_cfg => |cfg| {
-                if (self.serial.is_open) return;
-                self.stream_mode = .Serial;
-                self.serial.openWithConfiguration(cfg) catch return;
-                self.reader = self.serial.getReaderInterface();
-                self.writer = self.serial.getWriterInterface();
-            },
-            .net_cfg => |cfg| {
-                if (self.net.is_open) return;
-                self.stream_mode = .NetStream;
-                self.net.connect(cfg.addr, .TCP) catch return;
-                self.reader = self.net.getReaderInterface();
-                self.writer = self.net.getWriterInterface();
-            },
-        }
-
-        // self.is_listening = true;
-        // self.configuration_view.is_stream_open = true;
-        // self.reader_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, Tui.streamReaderThread, .{self});
-        // self.reader_thread.?.detach();
-        // self.writer_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, Tui.streamWriterThread, .{self});
-        // self.writer_thread.?.detach();
-        // self.state = .Home;
     }
 
     pub fn closeStream(self: *Tui) void {
-        if (self.stream_status == .Open) {
-            self.stream_status = .Closed;
-            self.reader_thread.?.join();
-            self.writer_thread.?.join();
-            self.reader_thread = null;
-            self.writer_thread = null;
-        }
-
-        if (self.stream) |stream| {
-            stream.close(self.io, self.allocator);
-        }
+        self.stream.?.close(self.io, self.allocator);
+        self.reader_thread.?.join();
+        self.writer_thread.?.join();
+        self.reader_thread = null;
+        self.writer_thread = null;
         self.stream = null;
     }
 
@@ -588,7 +396,6 @@ pub const Tui = struct {
 
     pub fn streamReaderThread(self: *Tui) !void {
         _ = try self.stream.?.read(self.io, &rx_buffer);
-        //TODO: send close port event
         while (self.stream_status == .Open) {
             try self.io.sleep(.fromMilliseconds(1), .awake);
             const bytes_read = try self.stream.?.read(self.io, &rx_buffer);
@@ -606,40 +413,6 @@ pub const Tui = struct {
                 }
             }
         }
-
-        // while (self.is_listening) {
-        //     std.Thread.sleep(1 * std.time.ns_per_ms);
-
-        //     if (self.reader.?.stream(&buffer.writer, .unlimited)) |bytes_read| {
-        //         const dt = @as(f32, @floatFromInt(begin - std.time.milliTimestamp())) / 1000.0;
-        //         bps += @intCast(bytes_read);
-        //         if (dt > 1.0) {
-        //             self.bps = @as(f32, @floatFromInt(bps)) / dt;
-        //             bps = 0;
-        //             begin = std.time.milliTimestamp();
-        //             // self.bps = alpha * bps + (1.0 - alpha) * self.bps;
-        //         }
-        //         // const bps = @as(f32, @floatFromInt(@as(i64, @intCast(bytes_read)) * (end - begin))) / std.time.ms_per_s;
-
-        //         if (bytes_read == 0) continue;
-
-        //         var token: NewLineIterator = .{
-        //             .buffer = rx_buffer[0..bytes_read],
-        //         };
-
-        //         while (token.next()) |record| {
-        //             try self.stream_view.append(.{
-        //                 .text = try self.stream_view.allocator.dupe(u8, record),
-        //                 .time = std.time.milliTimestamp(),
-        //                 .rxOrTx = .RX,
-        //             });
-        //         }
-
-        //         _ = std.Io.Writer.consumeAll(&buffer.writer);
-        //         self.stream_view.snap = .Bot;
-        //         self.refresh = true;
-        //     } else |_| {}
-        // }
     }
 };
 

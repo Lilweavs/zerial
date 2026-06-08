@@ -1,7 +1,5 @@
 const std = @import("std");
 const vaxis = @import("vaxis");
-const Serial = @import("serial.zig");
-const CircularArray = @import("circular_array.zig");
 
 const Record = @import("record.zig");
 
@@ -119,7 +117,6 @@ pub const StreamView = struct {
 
         self.index = @min(self.index, self.records.len -| 1);
 
-        // std.log.info("size: {d}\n", .{self.records.len});
         for (self.records, 0..) |record, i| {
             var milliseconds = @mod(record.time, std.time.ms_per_day);
             const hours = @abs(@divFloor(milliseconds, std.time.ms_per_hour));

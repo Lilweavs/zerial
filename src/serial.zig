@@ -5,13 +5,7 @@ const File = std.Io.File;
 const Serial = @This();
 const Stream = @import("tui.zig").Stream;
 const Allocator = std.mem.Allocator;
-// is_open: bool = false,
-// mutex: std.Thread.Mutex = .{},
-
-// config: Options = .{},
-
 port: File,
-// fh: std.Io.File.Handle,
 const Self = @This();
 
 var options = Options{};
@@ -34,21 +28,9 @@ pub fn openStream(io: std.Io, allocator: Allocator, opts: Options) !Stream {
     };
 }
 
-// pub fn stream(self: *Self) Stream {
-//     return .{
-//         .ctx = self,
-//         .readFn = read,
-//         .writeFn = write,
-//     };
-// }
-
 fn read(ctx: *anyopaque, io: std.Io, buf: []u8) !usize {
     const self: *Self = @ptrCast(@alignCast(ctx));
     const list: []const []u8 = &.{buf};
-    // var reader = self.port.readerStreaming(io, buf);
-    // const b = try reader.interface.takeByte();
-    // buf[0] = b;
-    // return 1;
     return try self.port.readStreaming(io, list);
 }
 
@@ -89,30 +71,6 @@ pub const Options = struct {
     parity: utils.Parity = .none,
     stopbits: utils.StopBits = .one,
 };
-
-// pub fn getReaderInterface(self: *Serial) ?*std.Io.Reader {
-//     return if (self.reader) |*reader| &reader.interface else null;
-// }
-
-// pub fn getWriterInterface(self: *Serial) ?*std.Io.Writer {
-//     return if (self.writer) |*writer| &writer.interface else null;
-// }
-
-// pub fn getStatus(self: Serial, allocator: std.mem.Allocator) ![]const u8 {
-//     return if (self.is_open)
-//         try std.fmt.allocPrint(allocator, "SERIAL | Connected: {s} @ {d} {d}{c}{d}", .{
-//             self.config.port,
-//             @intFromEnum(self.config.baudrate),
-//             @intFromEnum(self.config.wordsize),
-//             @intFromEnum(self.config.parity),
-//             @intFromEnum(self.config.stopbits),
-//         })
-//     else
-//         try std.fmt.allocPrint(allocator, "SERIAL | Disonnected | Error: {t}", .{
-//             self.error_code,
-//         });
-// }
-
 pub fn openWithConfiguration(self: *Serial, opts: Options) !void {
     if (self.is_open) {
         self.close();
@@ -176,15 +134,3 @@ pub fn setPortTimeout(port: std.fs.File, readTimeout: u32, writeTimeout: u32) !v
     var userTimeoutConfiguration = COMMTIMEOUTS{ .ReadIntervalTimeout = readTimeout, .ReadTotalTimeoutConstant = readTimeout, .ReadTotalTimeoutMultiplier = 1, .WriteTotalTimeoutConstant = writeTimeout, .WriteTotalTimeoutMultiplier = 1 };
     _ = SetCommTimeouts(port.handle, &userTimeoutConfiguration);
 }
-
-pub fn deinit(self: *Serial) void {
-    self.close();
-}
-
-// pub fn close(self: *Serial) void {
-//     if (self.file) |ptr| {
-//         self.is_open = false;
-//         ptr.close();
-//     }
-//     self.is_open = false;
-// }

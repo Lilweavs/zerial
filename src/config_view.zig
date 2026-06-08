@@ -2,7 +2,6 @@ const std = @import("std");
 const vaxis = @import("vaxis");
 const Serial = @import("serial.zig");
 const ser_utils = @import("serial");
-const Logger = @import("log.zig");
 const DropDown = @import("dropdown.zig").DropDown;
 const HorizontalLine = @import("HorizontalLine.zig").HorizontalLine;
 
@@ -18,14 +17,6 @@ pub const ConfigView = struct {
     databits_dropdown: DropDown = .{},
     parity_dropdown: DropDown = .{},
     stopbits_dropdown: DropDown = .{},
-    // ip_dropdown: DropDown,
-    // net_mode_dropdown: DropDown,
-    // input: vxfw.TextField,
-    // temp: []const u8 = "",
-    // is_ip_valid: bool = false,
-
-    // dropdowns: [5]*DropDown = undefined,
-
     is_stream_open: bool = false,
 
     button: vxfw.Button = .{
@@ -35,19 +26,7 @@ pub const ConfigView = struct {
 
     index: usize = 0,
 
-    // index_ser: usize = 0,
-    // index_tcp: usize = 0,
-    // at_button: bool = true,
-
-    // userdata: *anyopaque,
-
     allocator: Allocator,
-    // state: State = .Serial,
-
-    const State = enum {
-        Serial,
-        Ip,
-    };
 
     pub const size = vxfw.Size{ .width = 22, .height = 10 };
 
@@ -83,30 +62,7 @@ pub const ConfigView = struct {
     fn connectOrDisconnect(ptr: ?*anyopaque, event: *vxfw.EventContext) anyerror!void {
         _ = ptr;
         _ = event;
-        // const self: *vxfw.Button = @ptrCast(@alignCast(ptr));
-
         try event_queue.push(.StreamOpenClose);
-
-        // if (self.is_stream_open) return tui.closeStream();
-
-        // if (self.state == .Serial) {
-        //     const port = self.port_dropdown.list.items[self.port_dropdown.list_view.cursor];
-
-        //     try tui.openStream(.{ .ser_cfg = .{
-        //         .port = port.text,
-        //         .baudrate = @enumFromInt(try std.fmt.parseInt(u32, self.baudrate_dropdown.list.items[self.baudrate_dropdown.list_view.cursor].text[1..], 10)),
-        //     } });
-        // } else {
-        //     if (self.is_ip_valid) {
-        //         const address = try std.net.Address.parseIpAndPort(self.input.previous_val);
-
-        //         if (self.ip_dropdown.list_view.cursor == 0)
-        //             try tui.openStream(.{ .net_cfg = .{ .addr = address, .mode = .TCP } });
-        //     }
-        // }
-
-        // event.consumeAndRedraw();
-        // return;
     }
 
     pub fn widget(self: *ConfigView) vxfw.Widget {
@@ -121,22 +77,6 @@ pub const ConfigView = struct {
         const self: *ConfigView = @ptrCast(@alignCast(ptr));
         return self.handleEvent(ctx, event);
     }
-
-    // pub fn enumerateSerialPorts(self: *ConfigView) !void {
-    //     var com_port_iter = try ser_utils.list();
-
-    //     for (self.port_dropdown.list.items) |text| {
-    //         self.allocator.free(text.text);
-    //     }
-
-    //     self.port_dropdown.list.clearRetainingCapacity();
-
-    //     while (try com_port_iter.next()) |com_port| {
-    //         try self.port_dropdown.list.append(self.allocator, vxfw.Text{
-    //             .text = try self.allocator.dupe(u8, com_port.display_name),
-    //         });
-    //     }
-    // }
 
     pub fn handleEvent(self: *ConfigView, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
         switch (event) {
@@ -163,9 +103,6 @@ pub const ConfigView = struct {
                     try list.append(self.allocator, try self.allocator.dupe(u8, field.name));
                 }
                 self.stopbits_dropdown.list = try list.toOwnedSlice(self.allocator);
-
-                // self.input.onChange = ConfigModel.validateIpInput;
-                // self.input.userdata = self;
 
                 self.button.userdata = &self.button;
                 return self.button.handleEvent(ctx, .focus_in);
@@ -250,23 +187,6 @@ pub const ConfigView = struct {
         }
     }
 
-    fn dispatchEvent(self: *ConfigView, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
-        if (self.state == .Serial) {} else {
-            switch (self.index_tcp) {
-                0 => {
-                    return self.button.handleEvent(ctx, event);
-                },
-                1 => {
-                    return self.ip_dropdown.handleEvent(ctx, event);
-                },
-                2 => {
-                    return self.input.handleEvent(ctx, event);
-                },
-                else => unreachable,
-            }
-        }
-    }
-
     fn setSelected(self: *ConfigView) void {
         self.button.focused = false;
         self.port_dropdown.is_focused = false;
@@ -287,10 +207,6 @@ pub const ConfigView = struct {
 
     pub fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
         const self: *ConfigView = @ptrCast(@alignCast(ptr));
-
-        // if (self.state == .Ip) {
-        //     return try self.drawIpConfigView(ctx);
-        // }
 
         var height: u16 = 2;
         var width: u16 = 0;
@@ -409,57 +325,4 @@ pub const ConfigView = struct {
         };
     }
 
-    fn drawIpConfigView(self: *ConfigView, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
-        var children: std.ArrayList(vxfw.SubSurface) = .empty;
-
-        var height: u16 = 0;
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = 7 },
-            .surface = try self.button.widget().draw(ctx.withConstraints(.{ .width = 1, .height = 1 }, .{ .width = 8, .height = 1 })),
-        });
-
-        height += children.getLast().surface.size.height;
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = 0 },
-            .surface = try (HorizontalLine{}).widget().draw(ctx.withConstraints(ctx.min, ctx.max)),
-        });
-        height += children.getLast().surface.size.height;
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = 6 },
-            .surface = try (self.ip_dropdown.widget().draw(ctx.withConstraints(ctx.min, .{ .width = 8, .height = 2 }))),
-        });
-
-        height += children.getLast().surface.size.height;
-
-        try children.append(ctx.arena, .{
-            .origin = .{
-                .row = height,
-                .col = 0,
-            },
-            .surface = try (vxfw.Border{ .child = self.input.widget(), .style = .{
-                .blink = if (self.index_tcp == 1) true else false,
-                .fg = if (self.is_ip_valid) .{ .index = 2 } else .{ .index = 1 },
-            } }).widget().draw(ctx.withConstraints(ctx.min, .{ .width = ConfigView.size.width, .height = ConfigView.size.height })),
-        });
-
-        height += children.getLast().surface.size.height;
-
-        if (self.is_stream_open) {
-            self.button.label = "Close";
-            self.button.style.focus = .{ .reverse = true, .blink = true };
-        } else {
-            self.button.label = "Open";
-            self.button.style.focus = .{ .reverse = true, .blink = true };
-        }
-
-        return .{
-            .size = .{ .width = children.getLast().surface.size.width, .height = height },
-            .widget = self.widget(),
-            .buffer = &.{},
-            .children = children.items,
-        };
-    }
 };

@@ -59,6 +59,7 @@ pub const SendView = struct {
             .init => {
                 self.input.userdata = self;
                 self.input.onChange = onChange;
+                self.input.onSubmit = onSubmit;
                 self.drop_down.list = self.history_list;
             },
             .key_press => |key| {
@@ -85,7 +86,7 @@ pub const SendView = struct {
 
                 if (self.show_history) {
                     if (key.matches(vaxis.Key.enter, .{ .ctrl = true })) {
-                        if (self.drop_down.list.items.len == 0) return;
+                        if (self.drop_down.list.len == 0) return;
 
                         const to_send = self.drop_down.list[self.drop_down.index];
 
@@ -100,28 +101,16 @@ pub const SendView = struct {
                         return try self.drop_down.handleEvent(ctx, .{ .key_press = .{ .codepoint = 'k' } });
                     }
 
-                    if (key.matches('d', .{ .ctrl = true })) {
-                        // if (self.history_list.list.items.len == 0) return;
-                        // const ptr = self.history_list.list.orderedRemove(self.history_list.list_view.cursor);
-                        // defer ctx.alloc.free(ptr.text);
-                        // if (self.history_list.list_view.cursor > self.history_list.list.items.len) {
-                        //     self.history_list.list_view.cursor -|= 1;
-                        // }
-                        // return ctx.consumeAndRedraw();
-                    }
-
                     if (key.matches('e', .{ .ctrl = true })) {
                         if (self.drop_down.list.len == 0) return;
 
                         const item = self.drop_down.list[self.drop_down.index];
                         self.input.clearAndFree();
                         try self.input.insertSliceAtCursor(item);
-                        // self.history_visible = false;
 
                         return ctx.consumeAndRedraw();
                     }
 
-                    // return self.history_list.handleEvent(ctx, event);
                     return self.input.handleEvent(ctx, event);
                 } else {
                     defer {
@@ -146,14 +135,6 @@ pub const SendView = struct {
     pub fn onSubmit(ptr: ?*anyopaque, ctx: *vxfw.EventContext, str: []const u8) anyerror!void {
         const self: *SendView = @ptrCast(@alignCast(ptr));
 
-        // for (self.history_list.list.items) |item| {
-        //     if (std.mem.eql(u8, item.text, str)) {
-        //         break;
-        //     }
-        // } else try self.history_list.list.append(ctx.alloc, .{
-        //     .text = try ctx.alloc.dupe(u8, str),
-        // });
-
         _ = try self.write_queue.tryPush(try std.fmt.allocPrint(ctx.alloc, "{s}{s}", .{ str, getDelimiter(self.delimiter) }));
 
         return ctx.consumeAndRedraw();
@@ -161,19 +142,20 @@ pub const SendView = struct {
 
     pub fn onChange(ptr: ?*anyopaque, ctx: *vxfw.EventContext, str: []const u8) anyerror!void {
         const self: *SendView = @ptrCast(@alignCast(ptr));
-        if (self.show_history) {
-            if (str.len > 0) {
-                const filtered = try fuzz.fuzzList(self.history_list, str, ctx.alloc);
-                defer ctx.alloc.free(filtered);
-                self.filtered_list.clearRetainingCapacity();
-                for (filtered) |item| {
-                    try self.filtered_list.append(self.allocator, self.history_list[item.idx]);
-                }
-                self.drop_down.list = self.filtered_list.items;
-            } else {
-                self.drop_down.list = self.history_list;
+        self.filtered_list.clearRetainingCapacity();
+        if (str.len > 0) {
+            const filtered = try fuzz.fuzzList(self.history_list, str, ctx.alloc);
+            defer ctx.alloc.free(filtered);
+            for (filtered) |item| {
+                try self.filtered_list.append(self.allocator, self.history_list[item.idx]);
+            }
+        } else {
+            for (self.history_list) |h| {
+                try self.filtered_list.append(self.allocator, h);
             }
         }
+
+        self.drop_down.list = self.filtered_list.items;
 
         return ctx.consumeAndRedraw();
     }
@@ -219,11 +201,9 @@ pub const SendView = struct {
 
             try children.append(ctx.arena, .{
                 .origin = .{ .row = height, .col = 0 },
-                // .surface = try self.drop_down.widget().draw(ctx.withConstraints(.{ .width = ctx.max.width.? - 5, .height = 1 }, ctx.max)),
                 .surface = try self.drop_down.widget().draw(ctx),
             });
 
-            // width += children.getLast().surface.size.width;
             height += children.getLast().surface.size.height;
         }
 
