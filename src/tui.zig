@@ -168,6 +168,7 @@ pub const Tui = struct {
                                 self.stream_status = .Open;
                                 self.config_view.is_stream_open = true;
                                 self.state = .Home;
+                                try ctx.requestFocus(self.widget());
                                 self.up_time = std.Io.Timestamp.now(self.io, .awake);
                                 self.last_error = null;
 
@@ -181,6 +182,7 @@ pub const Tui = struct {
                         },
                         .Home => {
                             self.state = .Home;
+                            try ctx.requestFocus(self.widget());
                         },
                     }
                 }
@@ -212,6 +214,7 @@ pub const Tui = struct {
                         }
                         if (key.matches('o', .{})) {
                             self.state = .Configuration;
+                            try ctx.requestFocus(self.widget());
                             self.config_view.deinitPortDropdown(self.allocator);
                             self.config_view.port_dropdown.list = try self.config_view.enumerateSerialPorts(self.io, self.allocator);
                         }
