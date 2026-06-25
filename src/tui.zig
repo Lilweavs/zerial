@@ -208,6 +208,7 @@ pub const Tui = struct {
                         }
                         if (key.matches(':', .{})) {
                             self.state = .SendView;
+                            try ctx.requestFocus(self.send_view.input.widget());
                         }
                         if (key.matches('o', .{})) {
                             self.state = .Configuration;

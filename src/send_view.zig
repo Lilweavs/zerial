@@ -46,9 +46,32 @@ pub const SendView = struct {
     pub fn widget(self: *SendView) vxfw.Widget {
         return .{
             .userdata = self,
+            .captureHandler = SendView.typeErasedCaptureHandler,
             .eventHandler = SendView.typeErasedEventHandler,
             .drawFn = SendView.typeErasedDrawFn,
         };
+    }
+
+    fn typeErasedCaptureHandler(ptr: *anyopaque, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
+        const self: *SendView = @ptrCast(@alignCast(ptr));
+        return self.captureEvent(ctx, event);
+    }
+
+    fn captureEvent(self: *SendView, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
+        switch (event) {
+            .key_press => |key| {
+                if (self.show_history) {
+                    if (key.matches('j', .{ .ctrl = true }) or
+                        key.matches('k', .{ .ctrl = true }) or
+                        key.matches('e', .{ .ctrl = true }) or
+                        key.matches(vaxis.Key.enter, .{ .ctrl = true }))
+                    {
+                        return self.handleEvent(ctx, event);
+                    }
+                }
+            },
+            else => {},
+        }
     }
 
     fn typeErasedEventHandler(ptr: *anyopaque, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
@@ -120,7 +143,6 @@ pub const SendView = struct {
                             self.input.deleteToStart();
                         }
                     }
-                    // handle special logic for send view before sending data to TextField
                     return self.input.handleEvent(ctx, event);
                 }
             },
