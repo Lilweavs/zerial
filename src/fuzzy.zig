@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const Allocotor = std.mem.Allocator;
+const Allocator = std.mem.Allocator;
 
 pub const Fuzz = struct {
     idx: usize,
@@ -11,7 +11,7 @@ fn lessThan(_: void, a: Fuzz, b: Fuzz) bool {
     return a.score > b.score;
 }
 
-pub fn fuzzList(list: []const []const u8, sequence: []const u8, allocator: Allocotor) ![]Fuzz {
+pub fn fuzzList(list: []const []const u8, sequence: []const u8, allocator: Allocator) ![]Fuzz {
     var fuzz_list: std.ArrayList(Fuzz) = .empty;
 
     for (list, 0..) |string, i| {
