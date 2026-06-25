@@ -18,6 +18,29 @@ pub fn openStream(io: std.Io, allocator: Allocator, opts: Options) !Stream {
     };
 
     try utils.configureSerialPort(serial.port, .{ .baud_rate = @intFromEnum(opts.baudrate), .parity = opts.parity, .stop_bits = opts.stopbits, .word_size = opts.wordsize });
+
+    if (builtin.os.tag == .windows) {
+        const COMMTIMEOUTS = extern struct {
+            ReadIntervalTimeout: u32,
+            ReadTotalTimeoutMultiplier: u32,
+            ReadTotalTimeoutConstant: u32,
+            WriteTotalTimeoutMultiplier: u32,
+            WriteTotalTimeoutConstant: u32,
+        };
+        const SetCommTimeouts = @extern(*const fn (std.os.windows.HANDLE, *COMMTIMEOUTS) callconv(.winapi) i32, .{
+            .name = "SetCommTimeouts",
+            .library_name = "kernel32",
+        });
+        var timeouts: COMMTIMEOUTS = .{
+            .ReadIntervalTimeout = 100,
+            .ReadTotalTimeoutMultiplier = 0,
+            .ReadTotalTimeoutConstant = 100,
+            .WriteTotalTimeoutMultiplier = 0,
+            .WriteTotalTimeoutConstant = 0,
+        };
+        _ = SetCommTimeouts(serial.port.handle, &timeouts);
+    }
+
     options = opts;
     return .{
         .ctx = serial,
@@ -71,66 +94,3 @@ pub const Options = struct {
     parity: utils.Parity = .none,
     stopbits: utils.StopBits = .one,
 };
-pub fn openWithConfiguration(self: *Serial, opts: Options) !void {
-    if (self.is_open) {
-        self.close();
-    }
-
-    var cfg = opts;
-
-    errdefer |err| {
-        self.error_code = err;
-    }
-
-    cfg.port = try std.fmt.bufPrint(&self.port_buffer, if (builtin.os.tag == .windows) "\\\\.\\{s}" else "{s}", .{cfg.port});
-
-    self.file = try std.fs.cwd().openFile(cfg.port, .{ .mode = .read_write });
-
-    utils.configureSerialPort(self.file.?, .{ .baud_rate = @intFromEnum(cfg.baudrate), .parity = cfg.parity, .stop_bits = cfg.stopbits, .word_size = cfg.wordsize }) catch {
-        self.error_code = error.CannotConfigureSerialPort;
-        self.close();
-    };
-
-    if (builtin.os.tag == .windows) {
-        var timeouts: COMMTIMEOUTS = undefined;
-        if (GetCommTimeouts(self.file.?.handle, &timeouts) == 0) {
-            // @import("main.zig").logger.log("GetLastError: {d}\n", .{std.os.windows.kernel32.GetLastError()}) catch {};
-        } else {
-            // @import("main.zig").logger.log("[ SUCCESS ]: GetCommTimeouts\n", .{}) catch {};
-        }
-
-        timeouts.read_interval_timeout = std.math.maxInt(std.os.windows.DWORD);
-        timeouts.read_total_timeout_multiplier = std.math.maxInt(std.os.windows.DWORD);
-        timeouts.read_total_timeout_constant = 1;
-        timeouts.write_total_timeout_multiplier = 0;
-        timeouts.write_total_timeout_constant = 0;
-
-        if (SetCommTimeouts(self.file.?.handle, &timeouts) == 0) {
-            // @import("main.zig").logger.log("GetLastError: {}\n", .{std.os.windows.kernel32.GetLastError()}) catch {};
-        } else {
-            // @import("main.zig").logger.log("[ SUCCESS ]: SetCommTimeouts\n", .{}) catch {};
-        }
-    }
-
-    self.config = cfg;
-    self.reader = self.file.?.readerStreaming(&.{});
-    self.writer = self.file.?.writerStreaming(&.{});
-    self.is_open = true;
-    self.error_code = error.None;
-}
-
-const COMMTIMEOUTS = extern struct {
-    read_interval_timeout: std.os.windows.DWORD,
-    read_total_timeout_multiplier: std.os.windows.DWORD,
-    read_total_timeout_constant: std.os.windows.DWORD,
-    write_total_timeout_multiplier: std.os.windows.DWORD,
-    write_total_timeout_constant: std.os.windows.DWORD,
-};
-
-extern "kernel32" fn SetCommTimeouts(hFile: std.os.windows.HANDLE, lpCommTimeouts: *COMMTIMEOUTS) callconv(.winapi) std.os.windows.BOOL;
-extern "kernel32" fn GetCommTimeouts(hFile: std.os.windows.HANDLE, lpCommTimeouts: *COMMTIMEOUTS) callconv(.winapi) std.os.windows.BOOL;
-
-pub fn setPortTimeout(port: std.fs.File, readTimeout: u32, writeTimeout: u32) !void {
-    var userTimeoutConfiguration = COMMTIMEOUTS{ .ReadIntervalTimeout = readTimeout, .ReadTotalTimeoutConstant = readTimeout, .ReadTotalTimeoutMultiplier = 1, .WriteTotalTimeoutConstant = writeTimeout, .WriteTotalTimeoutMultiplier = 1 };
-    _ = SetCommTimeouts(port.handle, &userTimeoutConfiguration);
-}

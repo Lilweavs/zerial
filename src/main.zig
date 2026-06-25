@@ -15,20 +15,8 @@ pub fn main(init: std.process.Init) !void {
     const tui = try allocator.create(Tui.Tui);
     try tui.init(io, allocator);
 
-    _ = tui.records.pushDropOldest(.{
-        .rxOrTx = .RX,
-        .text = try std.fmt.allocPrint(allocator, "Hellow, OWlrd\n", .{}),
-        .time = 10000000,
-    });
-
-    _ = tui.records.pushDropOldest(.{
-        .rxOrTx = .RX,
-        .text = try std.fmt.allocPrint(allocator, "Hellow, lkjdfrd\n", .{}),
-        .time = 10020000,
-    });
-
-    defer tui.deinit();
     defer allocator.destroy(tui);
+    defer tui.deinit();
 
     try app.run(tui.widget(), .{});
 }

@@ -136,7 +136,8 @@ pub const Tui = struct {
     }
 
     pub fn deinit(self: *Tui) void {
-        self.closeStream();
+        self.stream_status = .Closed;
+        if (self.stream) |s| s.close(self.io, self.allocator);
         while (self.records.popOrNull()) |r| {
             self.allocator.free(r.text);
         }
@@ -372,21 +373,18 @@ pub const Tui = struct {
     pub fn closeStream(self: *Tui) void {
         self.stream_status = .Closed;
         if (self.stream) |s| s.close(self.io, self.allocator);
-        if (self.reader_thread) |t| t.join();
-        if (self.writer_thread) |t| t.join();
-        self.reader_thread = null;
-        self.writer_thread = null;
         self.stream = null;
     }
 
     fn streamWriterThread(self: *Tui) !void {
         while (self.stream_status == .Open) {
             try self.io.sleep(.fromMilliseconds(1), .awake);
+            if (self.stream_status != .Open) break;
             const msg = try self.write_queue.tryPop() orelse continue;
             errdefer self.allocator.free(msg);
 
-            _ = try self.stream.?.write(self.io, msg);
-            // transfer ownership to Record
+            const stream = self.stream orelse break;
+            _ = try stream.write(self.io, msg);
             if (try self.read_queue.tryPush(.{
                 .rxOrTx = .TX,
                 .text = msg,
@@ -398,10 +396,11 @@ pub const Tui = struct {
     }
 
     pub fn streamReaderThread(self: *Tui) !void {
-        _ = try self.stream.?.read(self.io, &rx_buffer);
         while (self.stream_status == .Open) {
             try self.io.sleep(.fromMilliseconds(1), .awake);
-            const bytes_read = try self.stream.?.read(self.io, &rx_buffer);
+            if (self.stream_status != .Open) break;
+            const stream = self.stream orelse break;
+            const bytes_read = try stream.read(self.io, &rx_buffer);
 
             var iter: NewLineIterator = .init(rx_buffer[0..bytes_read]);
             while (iter.next()) |line| {
