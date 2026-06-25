@@ -6,6 +6,11 @@ const Serial = @This();
 const Stream = @import("stream.zig").Stream;
 const Allocator = std.mem.Allocator;
 port: File,
+io: std.Io,
+rx_bytes: u64 = 0,
+rx_prev: u64 = 0,
+bw_time: i64 = 0,
+bw_rate: u64 = 0,
 const Self = @This();
 
 var options = Options{};
@@ -15,6 +20,7 @@ pub fn openStream(io: std.Io, allocator: Allocator, opts: Options) !Stream {
     errdefer allocator.destroy(serial);
     serial.* = .{
         .port = std.Io.Dir.openFileAbsolute(io, opts.port, .{ .mode = .read_write }) catch |err| return err,
+        .io = io,
     };
 
     try utils.configureSerialPort(serial.port, .{ .baud_rate = @intFromEnum(opts.baudrate), .parity = opts.parity, .stop_bits = opts.stopbits, .word_size = opts.wordsize });
@@ -54,7 +60,9 @@ pub fn openStream(io: std.Io, allocator: Allocator, opts: Options) !Stream {
 fn read(ctx: *anyopaque, io: std.Io, buf: []u8) !usize {
     const self: *Self = @ptrCast(@alignCast(ctx));
     const list: []const []u8 = &.{buf};
-    return try self.port.readStreaming(io, list);
+    const n = try self.port.readStreaming(io, list);
+    self.rx_bytes += n;
+    return n;
 }
 
 fn write(ctx: *anyopaque, io: std.Io, buf: []const u8) !usize {
@@ -72,8 +80,25 @@ fn close(ctx: *anyopaque, io: std.Io, allocator: Allocator) void {
 }
 
 fn status(ctx: *anyopaque, allocator: Allocator) anyerror![]const u8 {
-    _ = ctx;
-    return try std.fmt.allocPrint(allocator, "Connected: {s} @ {d}", .{ options.port, @intFromEnum(options.baudrate) });
+    const self: *Self = @ptrCast(@alignCast(ctx));
+    const now = std.Io.Timestamp.now(self.io, .awake).toMilliseconds();
+    const elapsed = now - self.bw_time;
+    if (elapsed >= 1000) {
+        self.bw_rate = self.rx_bytes - self.rx_prev;
+        self.rx_prev = self.rx_bytes;
+        self.bw_time = now;
+    }
+    const bw_str = if (self.bw_rate >= 1_000_000)
+        try std.fmt.allocPrint(allocator, "{d:.1}MB/s", .{@as(f64, @floatFromInt(self.bw_rate)) / 1_000_000})
+    else if (self.bw_rate >= 1_000)
+        try std.fmt.allocPrint(allocator, "{d:.1}KB/s", .{@as(f64, @floatFromInt(self.bw_rate)) / 1_000})
+    else
+        try std.fmt.allocPrint(allocator, "{}B/s", .{self.bw_rate});
+    defer allocator.free(bw_str);
+
+    return try std.fmt.allocPrint(allocator, "Connected: {s} @ {d}  BW: {s}", .{
+        options.port, @intFromEnum(options.baudrate), bw_str,
+    });
 }
 
 pub const Baudrates = enum(u32) {
