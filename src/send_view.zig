@@ -19,6 +19,7 @@ pub const SendView = struct {
     write_queue: *vaxis.Queue([]const u8, 8) = undefined,
     delimiter: Delimiter = .CRLF,
     allocator: Allocator,
+    appdata_dir: []const u8 = &.{},
 
     const Delimiter = enum(u2) {
         NONE,
@@ -38,8 +39,10 @@ pub const SendView = struct {
 
     pub fn deinit(self: *SendView, allocator: Allocator) void {
         self.input.deinit();
-        self.drop_down.list = self.history_list;
+        self.drop_down.list = &.{};
         self.drop_down.deinit(allocator);
+        for (self.history_list) |h| allocator.free(h);
+        allocator.free(self.history_list);
         self.filtered_list.deinit(allocator);
     }
 
@@ -85,7 +88,7 @@ pub const SendView = struct {
             .init => {
                 self.input.userdata = self;
                 self.input.onChange = onChange;
-                self.input.onSubmit = onSubmit;
+                self.input.onSubmit = onSendSubmit;
                 self.drop_down.list = self.history_list;
             },
             .key_press => |key| {
@@ -103,7 +106,7 @@ pub const SendView = struct {
                     return ctx.consumeAndRedraw();
                 }
 
-                if (key.matches('l', .{ .ctrl = true })) {
+                if (key.matches('d', .{ .ctrl = true }) and !self.show_history) {
                     var i: u2 = @intFromEnum(self.delimiter);
                     i +%= 1;
                     self.delimiter = @enumFromInt(i);
@@ -180,7 +183,7 @@ pub const SendView = struct {
         return;
     }
 
-    pub fn onSubmit(ptr: ?*anyopaque, ctx: *vxfw.EventContext, str: []const u8) anyerror!void {
+    pub fn onSendSubmit(ptr: ?*anyopaque, ctx: *vxfw.EventContext, str: []const u8) anyerror!void {
         const self: *SendView = @ptrCast(@alignCast(ptr));
 
         _ = try self.write_queue.tryPush(try std.fmt.allocPrint(ctx.alloc, "{s}{s}", .{ str, getDelimiter(self.delimiter) }));
@@ -215,9 +218,11 @@ pub const SendView = struct {
 
         var width: u16 = 0;
         var height: u16 = 1;
+
+        const label = "send:";
         try children.append(ctx.arena, .{
             .origin = .{ .row = 0, .col = 0 },
-            .surface = try (vxfw.Text{ .text = "send:" }).widget().draw(ctx),
+            .surface = try (vxfw.Text{ .text = label }).widget().draw(ctx),
         });
 
         width += children.items[children.items.len - 1].surface.size.width;

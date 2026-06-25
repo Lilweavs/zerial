@@ -19,11 +19,15 @@ const ZerialState = enum {
     Home,
     SendView,
     Configuration,
+    SaveOverlay,
+    LoadOverlay,
 };
 
 const ConfigView = @import("config_view.zig").ConfigView;
 const StreamView = @import("serial_monitor.zig").StreamView;
 const SendView = @import("send_view.zig").SendView;
+const SaveView = @import("save_view.zig").SaveView;
+const LoadView = @import("load_view.zig").LoadView;
 
 const TuiEvent = enum {
     ScrollUp,
@@ -39,9 +43,12 @@ pub const EventQueue = vaxis.Queue(TuiEvent, 8);
 pub const Tui = struct {
     allocator: Allocator,
     io: std.Io,
+    appdata_dir: []u8,
 
     stream_view: StreamView,
     send_view: SendView,
+    save_view: SaveView,
+    load_view: LoadView,
     config_view: ConfigView,
 
     event_queue: EventQueue,
@@ -83,7 +90,7 @@ pub const Tui = struct {
         "adc on",
     };
 
-    pub fn init(self: *Tui, io: std.Io, allocator: Allocator) !void {
+    pub fn init(self: *Tui, io: std.Io, allocator: Allocator, appdata_dir: []const u8) !void {
         self.* = .{
             .allocator = allocator,
             .io = io,
@@ -100,19 +107,42 @@ pub const Tui = struct {
                 },
                 .allocator = allocator,
             },
+            .save_view = undefined,
+            .load_view = undefined,
             .records = try RecordArray.initCapacity(allocator, 1024),
             .read_queue = .init(io),
             .write_queue = .init(io),
+            .appdata_dir = try allocator.dupe(u8, appdata_dir),
+        };
+        errdefer allocator.free(self.appdata_dir);
+        std.Io.Dir.createDirAbsolute(self.io, self.appdata_dir, .default_dir) catch |e| switch (e) {
+            error.PathAlreadyExists => {},
+            else => |err| return err,
         };
         self.stream_view.event_queue = &self.event_queue;
         self.config_view.event_queue = &self.event_queue;
         self.send_view.event_queue = &self.event_queue;
         self.send_view.write_queue = &self.write_queue;
+        self.send_view.appdata_dir = self.appdata_dir;
         var arr: std.ArrayList([]const u8) = try .initCapacity(self.allocator, history_commands.len);
         for (history_commands) |cmd| {
             try arr.append(allocator, try allocator.dupe(u8, cmd));
         }
         self.send_view.history_list = try arr.toOwnedSlice(allocator);
+        self.save_view = .{
+            .input = .{ .buf = .init(allocator) },
+            .event_queue = &self.event_queue,
+            .allocator = allocator,
+            .appdata_dir = self.appdata_dir,
+            .history_list = &self.send_view.history_list,
+        };
+        self.load_view = .{
+            .event_queue = &self.event_queue,
+            .allocator = allocator,
+            .appdata_dir = self.appdata_dir,
+            .history_list = &self.send_view.history_list,
+        };
+        try self.load_view.loadLastHistory(io);
     }
 
     pub fn deinit(self: *Tui) void {
@@ -131,6 +161,9 @@ pub const Tui = struct {
 
         self.config_view.deinit(self.allocator);
         self.send_view.deinit(self.allocator);
+        self.save_view.deinit(self.allocator);
+        self.load_view.deinit(self.allocator);
+        self.allocator.free(self.appdata_dir);
     }
 
     fn typeErasedEventHandler(ptr: *anyopaque, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
@@ -143,6 +176,8 @@ pub const Tui = struct {
             .init => {
                 try self.config_view.handleEvent(ctx, event);
                 try self.send_view.handleEvent(ctx, event);
+                try self.save_view.handleEvent(ctx, event);
+                try self.load_view.handleEvent(ctx, event);
                 try ctx.tick(std.time.ms_per_s / 60, self.widget());
             },
             .tick => {
@@ -203,10 +238,39 @@ pub const Tui = struct {
                         try self.send_view.handleEvent(ctx, event);
                         return ctx.consumeAndRedraw();
                     },
+                    .SaveOverlay => {
+                        if (key.matches(vaxis.Key.escape, .{})) {
+                            self.state = .Home;
+                            try ctx.requestFocus(self.widget());
+                            return ctx.consumeAndRedraw();
+                        }
+                        try self.save_view.handleEvent(ctx, event);
+                        return ctx.consumeAndRedraw();
+                    },
+                    .LoadOverlay => {
+                        if (key.matches(vaxis.Key.escape, .{})) {
+                            self.state = .Home;
+                            try ctx.requestFocus(self.widget());
+                            return ctx.consumeAndRedraw();
+                        }
+                        try self.load_view.handleEvent(ctx, event);
+                        return ctx.consumeAndRedraw();
+                    },
                     else => {
+                        if (key.matches('s', .{ .ctrl = true })) {
+                            self.state = .SaveOverlay;
+                            self.save_view.save_sub_mode = .Buttons;
+                            self.save_view.save_button_idx = 0;
+                            self.save_view.input.clearAndFree();
+                            try ctx.requestFocus(self.save_view.widget());
+                            return ctx.consumeAndRedraw();
+                        }
                         if (key.matches('o', .{ .ctrl = true })) {
-                            self.closeStream();
-                            return;
+                            self.state = .LoadOverlay;
+                            self.load_view.listHistFiles(ctx.io) catch {};
+                            self.load_view.file_dropdown.index = 0;
+                            try ctx.requestFocus(self.load_view.widget());
+                            return ctx.consumeAndRedraw();
                         }
                         if (key.matches(':', .{})) {
                             self.state = .SendView;
@@ -294,25 +358,44 @@ pub const Tui = struct {
         });
 
         if (self.state == .Configuration) {
-            try children.append(ctx.arena, .{
-                .origin = .{ .row = ctx.max.height.? / 4, .col = ctx.max.width.? / 2 -| 8 },
-                .surface = try (vxfw.Border{
-                    .child = self.config_view.widget(),
-                    .labels = &.{
-                        vxfw.Border.BorderLabel{
-                            .text = "Stream Config",
-                            .alignment = .top_center,
-                        },
+            const overlay = try (vxfw.Border{
+                .child = self.config_view.widget(),
+                .labels = &.{
+                    vxfw.Border.BorderLabel{
+                        .text = "Stream Config",
+                        .alignment = .top_center,
                     },
-                }).widget().draw(ctx.withConstraints(.{ .width = 15 }, ctx.max)),
-            });
-        } else if (self.state == .SendView) {
-            try children.append(ctx.arena, .{
-                .origin = .{ .row = ctx.max.height.? / 4, .col = ctx.max.width.? / 2 -| ctx.max.width.? / 4 },
-                .surface = try (vxfw.Border{
-                    .child = self.send_view.widget(),
-                }).widget().draw(ctx.withConstraints(ctx.min, .{ .width = ctx.max.width.? / 2 })),
-            });
+                },
+            }).widget().draw(ctx.withConstraints(.{ .width = 15 }, ctx.max));
+            const origin_row = (ctx.max.height.? -| overlay.size.height) / 2;
+            const origin_col = (ctx.max.width.? -| overlay.size.width) / 2;
+            try children.append(ctx.arena, .{ .origin = .{ .row = origin_row, .col = origin_col }, .surface = overlay });
+        } else if (self.state == .SendView or self.state == .SaveOverlay or self.state == .LoadOverlay) {
+            const child_widget = switch (self.state) {
+                .SaveOverlay => self.save_view.widget(),
+                .LoadOverlay => self.load_view.widget(),
+                .SendView => self.send_view.widget(),
+                else => unreachable,
+            };
+            const border_label: ?[]const u8 = switch (self.state) {
+                .SaveOverlay => "Save History",
+                .LoadOverlay => "Load History",
+                else => null,
+            };
+            const overlay = blk: {
+                var border = vxfw.Border{ .child = child_widget };
+                if (border_label) |label| {
+                    border.labels = &.{
+                        vxfw.Border.BorderLabel{ .text = label, .alignment = .top_center },
+                    };
+                }
+                const label_width: u16 = if (border_label) |l| @intCast(l.len) else 0;
+                const min_width: u16 = if (self.state == .SaveOverlay) @max(label_width, 21) + 2 else label_width + 2;
+                break :blk try border.widget().draw(ctx.withConstraints(.{ .width = min_width, .height = ctx.min.height }, .{ .width = ctx.max.width.? / 2 }));
+            };
+            const origin_row = (ctx.max.height.? -| overlay.size.height) / 2;
+            const origin_col = (ctx.max.width.? -| overlay.size.width) / 2;
+            try children.append(ctx.arena, .{ .origin = .{ .row = origin_row, .col = origin_col }, .surface = overlay });
         }
 
         return .{
