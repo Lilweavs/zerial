@@ -7,9 +7,10 @@ const HorizontalLine = @import("HorizontalLine.zig").HorizontalLine;
 
 const vxfw = vaxis.vxfw;
 
-const Allocator = std.mem.Allocator;
+const TuiEvent = @import("tui.zig");
+const EventQueue = TuiEvent.EventQueue;
 
-const event_queue = @import("tui.zig").eventQueue();
+const Allocator = std.mem.Allocator;
 
 pub const ConfigView = struct {
     port_dropdown: DropDown = .{},
@@ -26,9 +27,27 @@ pub const ConfigView = struct {
 
     index: usize = 0,
 
+    event_queue: *EventQueue,
     allocator: Allocator,
 
     pub const size = vxfw.Size{ .width = 22, .height = 10 };
+
+    pub fn enumerateSerialPorts(_: *ConfigView, io: std.Io, allocator: Allocator) ![][]const u8 {
+        var com_port_iter = try ser_utils.list(io);
+        var list: std.ArrayList([]const u8) = .empty;
+        while (try com_port_iter.next()) |com_port| {
+            try list.append(allocator, try allocator.dupe(u8, com_port.display_name));
+        }
+        return list.toOwnedSlice(allocator);
+    }
+
+    pub fn deinitPortDropdown(self: *ConfigView, allocator: Allocator) void {
+        if (self.port_dropdown.list.len > 0) {
+            for (self.port_dropdown.list) |ptr| allocator.free(ptr);
+            allocator.free(self.port_dropdown.list);
+        }
+        self.port_dropdown.list = &.{};
+    }
 
     pub fn deinit(self: *ConfigView, allocator: Allocator) void {
         self.port_dropdown.deinit(allocator);
@@ -60,9 +79,9 @@ pub const ConfigView = struct {
     }
 
     fn connectOrDisconnect(ptr: ?*anyopaque, event: *vxfw.EventContext) anyerror!void {
-        _ = ptr;
         _ = event;
-        try event_queue.push(.StreamOpenClose);
+        const self: *ConfigView = @ptrCast(@alignCast(ptr.?));
+        try self.event_queue.push(.StreamOpenClose);
     }
 
     pub fn widget(self: *ConfigView) vxfw.Widget {
@@ -104,7 +123,7 @@ pub const ConfigView = struct {
                 }
                 self.stopbits_dropdown.list = try list.toOwnedSlice(self.allocator);
 
-                self.button.userdata = &self.button;
+                self.button.userdata = self;
                 return self.button.handleEvent(ctx, .focus_in);
             },
             .key_press => |key| {
@@ -183,7 +202,7 @@ pub const ConfigView = struct {
             self.index -|= 1;
         }
         if (key.matches(vaxis.Key.escape, .{})) {
-            _ = event_queue.tryPush(.Home) catch @panic("not handled");
+            _ = self.event_queue.tryPush(.Home) catch @panic("not handled");
         }
     }
 

@@ -2,6 +2,7 @@ const std = @import("std");
 const vaxis = @import("vaxis");
 
 const Serial = @import("serial.zig");
+const Stream = @import("stream.zig").Stream;
 const Record = @import("record.zig");
 const CircularArray = @import("circular_array.zig").CircularArray;
 const RecordArray = CircularArray(Record);
@@ -13,33 +14,6 @@ const ser_utils = @import("serial");
 const Allocator = std.mem.Allocator;
 
 const vxfw = vaxis.vxfw;
-
-var rx_buffer: [1024 * 32]u8 = undefined;
-
-pub const Stream = struct {
-    ctx: *anyopaque,
-
-    readFn: *const fn (ctx: *anyopaque, io: std.Io, buf: []u8) anyerror!usize,
-    writeFn: *const fn (ctx: *anyopaque, io: std.Io, buf: []const u8) anyerror!usize,
-    statusFn: *const fn (ctx: *anyopaque, allocator: Allocator) anyerror![]const u8,
-    closeFn: ?*const fn (ctx: *anyopaque, io: std.Io, allocator: Allocator) void = null,
-
-    pub fn status(self: Stream, allocator: Allocator) anyerror![]const u8 {
-        return self.statusFn(self.ctx, allocator);
-    }
-
-    pub fn read(self: Stream, io: std.Io, buf: []u8) anyerror!usize {
-        return self.readFn(self.ctx, io, buf);
-    }
-
-    pub fn write(self: Stream, io: std.Io, buf: []const u8) anyerror!usize {
-        return self.writeFn(self.ctx, io, buf);
-    }
-
-    pub fn close(self: Stream, io: std.Io, allocator: Allocator) void {
-        if (self.closeFn) |f| f(self.ctx, io, allocator);
-    }
-};
 
 const ZerialState = enum {
     Home,
@@ -54,20 +28,13 @@ const SendView = @import("send_view.zig").SendView;
 const TuiEvent = enum {
     ScrollUp,
     ScrollDown,
-    // PageUp,
-    // PageDown,
-    // OpenStream,
-    // CloseStream,
+    PageUp,
+    PageDown,
     StreamOpenClose,
     Home,
 };
 
 pub const EventQueue = vaxis.Queue(TuiEvent, 8);
-var event_queue: EventQueue = undefined;
-
-pub fn eventQueue() *EventQueue {
-    return &event_queue;
-}
 
 pub const Tui = struct {
     allocator: Allocator,
@@ -76,6 +43,8 @@ pub const Tui = struct {
     stream_view: StreamView,
     send_view: SendView,
     config_view: ConfigView,
+
+    event_queue: EventQueue,
 
     stream: ?Stream = null,
     stream_status: enum(u8) { Open, Closed } = .Closed,
@@ -89,6 +58,8 @@ pub const Tui = struct {
 
     reader_thread: ?std.Thread = null,
     writer_thread: ?std.Thread = null,
+
+    read_buffer: [1024 * 32]u8 = undefined,
 
     last_error: ?anyerror = null,
 
@@ -104,16 +75,26 @@ pub const Tui = struct {
         };
     }
 
+    const history_commands = [_][]const u8{
+        "eth remote 192.168.1.1",
+        "eth stats",
+        "eth info",
+        "adc info",
+        "adc on",
+    };
+
     pub fn init(self: *Tui, io: std.Io, allocator: Allocator) !void {
-        event_queue = .init(io);
         self.* = .{
             .allocator = allocator,
             .io = io,
-            .stream_view = .{},
+            .event_queue = .init(io),
+            .stream_view = .{ .event_queue = undefined },
             .config_view = .{
+                .event_queue = undefined,
                 .allocator = allocator,
             },
             .send_view = .{
+                .event_queue = undefined,
                 .input = .{
                     .buf = .init(allocator),
                 },
@@ -123,15 +104,14 @@ pub const Tui = struct {
             .read_queue = .init(io),
             .write_queue = .init(io),
         };
+        self.stream_view.event_queue = &self.event_queue;
+        self.config_view.event_queue = &self.event_queue;
+        self.send_view.event_queue = &self.event_queue;
         self.send_view.write_queue = &self.write_queue;
-        var arr: std.ArrayList([]const u8) = try .initCapacity(self.allocator, 5);
-        try arr.appendSlice(allocator, &.{
-            try allocator.dupe(u8, "eth remote 192.168.1.1"),
-            try allocator.dupe(u8, "eth stats"),
-            try allocator.dupe(u8, "eth info"),
-            try allocator.dupe(u8, "adc info"),
-            try allocator.dupe(u8, "adc on"),
-        });
+        var arr: std.ArrayList([]const u8) = try .initCapacity(self.allocator, history_commands.len);
+        for (history_commands) |cmd| {
+            try arr.append(allocator, try allocator.dupe(u8, cmd));
+        }
         self.send_view.history_list = try arr.toOwnedSlice(allocator);
     }
 
@@ -171,10 +151,12 @@ pub const Tui = struct {
                     try self.addRecord(record);
                 }
 
-                while (try event_queue.tryPop()) |tevent| {
+                while (try self.event_queue.tryPop()) |tevent| {
                     switch (tevent) {
                         .ScrollUp => self.ascii_offset = @min(self.ascii_offset + 1, @max(self.records.size, self.records.size -| self.max_lines)),
                         .ScrollDown => self.ascii_offset = @max(self.max_lines, self.ascii_offset -| 1),
+                        .PageUp => self.ascii_offset = @min(self.ascii_offset + self.max_lines, @max(self.records.size, self.records.size -| self.max_lines)),
+                        .PageDown => self.ascii_offset = @max(self.max_lines, self.ascii_offset -| self.max_lines),
                         .StreamOpenClose => {
                             if (self.stream_status == .Closed) {
                                 const cfg = self.config_view.getSerialConfigOptions();
@@ -229,8 +211,8 @@ pub const Tui = struct {
                         }
                         if (key.matches('o', .{})) {
                             self.state = .Configuration;
-                            self.deinitDropDown();
-                            self.config_view.port_dropdown.list = try enumerateSerialPorts(self.io, self.allocator);
+                            self.config_view.deinitPortDropdown(self.allocator);
+                            self.config_view.port_dropdown.list = try self.config_view.enumerateSerialPorts(self.io, self.allocator);
                         }
                     },
                 }
@@ -329,33 +311,10 @@ pub const Tui = struct {
         };
     }
 
-    pub fn enumerateSerialPorts(io: std.Io, allocator: Allocator) ![][]const u8 {
-        var com_port_iter = try ser_utils.list(io);
-
-        var list: std.ArrayList([]const u8) = .empty;
-
-        while (try com_port_iter.next()) |com_port| {
-            try list.append(allocator, try allocator.dupe(u8, com_port.display_name));
-        }
-
-        return list.toOwnedSlice(allocator);
-    }
-
-    fn deinitDropDown(self: *Tui) void {
-        if (self.config_view.port_dropdown.list.len > 0) {
-            for (self.config_view.port_dropdown.list) |ptr| {
-                self.allocator.free(ptr);
-            }
-            self.allocator.free(self.config_view.port_dropdown.list);
-        }
-        self.config_view.port_dropdown.list = &.{};
-    }
-
     /// records are gauranteed to not have multiple new lines. They will either be
     /// 1. msg
     /// 2. msg + \n
     pub fn addRecord(self: *Tui, record: Record) !void {
-        // check for old ascii data
         if (self.records.getPtrOrNull(self.records.size -| 1)) |tail| {
             if (record.rxOrTx != tail.rxOrTx or tail.text[tail.text.len -| 1] == '\n') {
                 if (self.records.pushDropOldest(record)) |r| self.allocator.free(r.text);
@@ -400,9 +359,9 @@ pub const Tui = struct {
             try self.io.sleep(.fromMilliseconds(1), .awake);
             if (self.stream_status != .Open) break;
             const stream = self.stream orelse break;
-            const bytes_read = try stream.read(self.io, &rx_buffer);
+            const bytes_read = try stream.read(self.io, &self.read_buffer);
 
-            var iter: NewLineIterator = .init(rx_buffer[0..bytes_read]);
+            var iter: NewLineIterator = .init(self.read_buffer[0..bytes_read]);
             while (iter.next()) |line| {
                 const msg = try self.allocator.dupe(u8, line);
                 errdefer self.allocator.free(msg);

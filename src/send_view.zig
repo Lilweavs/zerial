@@ -6,7 +6,8 @@ const HorizontalLine = @import("HorizontalLine.zig").HorizontalLine;
 const vxfw = vaxis.vxfw;
 const fuzz = @import("fuzzy.zig");
 
-const event_queue = @import("tui.zig").eventQueue();
+const TuiEvent = @import("tui.zig");
+const EventQueue = TuiEvent.EventQueue;
 
 pub const SendView = struct {
     input: vxfw.TextField,
@@ -14,6 +15,7 @@ pub const SendView = struct {
     drop_down: DropDown = .{},
     history_list: [][]const u8 = &.{},
     filtered_list: std.ArrayList([]const u8) = .empty,
+    event_queue: *EventQueue,
     write_queue: *vaxis.Queue([]const u8, 8) = undefined,
     delimiter: Delimiter = .CRLF,
     allocator: Allocator,
@@ -64,7 +66,7 @@ pub const SendView = struct {
             },
             .key_press => |key| {
                 if (key.matches(vaxis.Key.escape, .{})) {
-                    _ = try event_queue.tryPush(.Home);
+                    _ = try self.event_queue.tryPush(.Home);
                     return;
                 }
 

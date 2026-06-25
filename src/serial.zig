@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 const utils = @import("serial");
 const File = std.Io.File;
 const Serial = @This();
-const Stream = @import("tui.zig").Stream;
+const Stream = @import("stream.zig").Stream;
 const Allocator = std.mem.Allocator;
 port: File,
 const Self = @This();

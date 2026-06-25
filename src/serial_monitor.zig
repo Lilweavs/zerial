@@ -7,7 +7,8 @@ const Allocator = std.mem.Allocator;
 
 const vxfw = vaxis.vxfw;
 
-const event_queue = @import("tui.zig").eventQueue();
+const TuiEvent = @import("tui.zig");
+const EventQueue = TuiEvent.EventQueue;
 
 pub const State = enum {
     Ascii,
@@ -16,14 +17,11 @@ pub const State = enum {
 
 pub const StreamView = struct {
     index: usize = 0,
-    hex_index: usize = 0,
 
     records: []Record = &.{},
     snap: SnapMode = .Bot,
-    // view_state: State = .Ascii,
 
-    top: usize = 0,
-    bot: usize = 0,
+    event_queue: *EventQueue,
 
     pub const SnapMode = enum {
         None,
@@ -66,39 +64,28 @@ pub const StreamView = struct {
                     self.index += 1;
                     if (self.index > self.records.len -| 1) {
                         self.index = self.records.len -| 1;
-                        _ = try event_queue.tryPush(.ScrollDown);
+                        _ = try self.event_queue.tryPush(.ScrollDown);
                     }
                 }
                 if (key.matches('k', .{})) {
                     if (self.index == 0) {
-                        _ = try event_queue.tryPush(.ScrollUp);
+                        _ = try self.event_queue.tryPush(.ScrollUp);
                     } else self.index -= 1;
                 }
                 if (key.matches('j', .{ .shift = true })) {
                     self.index += 5;
                     if (self.index > self.records.len -| 1) {
                         self.index = self.records.len -| 1;
-                        for (0..5) |_| _ = try event_queue.tryPush(.ScrollDown);
+                        _ = try self.event_queue.tryPush(.PageDown);
                     }
                 }
                 if (key.matches('k', .{ .shift = true })) {
                     if (self.index >= 5) {
                         self.index -= 5;
                     } else {
-                        for (0..5) |_| _ = try event_queue.tryPush(.ScrollUp);
+                        _ = try self.event_queue.tryPush(.PageUp);
                         self.index = 0;
                     }
-                }
-                if (key.matches('>', .{})) {
-                    // self.snap = .Bot;
-                }
-                if (key.matches('<', .{})) {
-                    // self.snap = .Top;
-                }
-                if (key.matches('y', .{})) {
-                    // if (self.data.size != 0) {
-                    // try ctx.cmds.append(ctx.alloc, .{ .copy_to_clipboard = self.data.get(self.index).text });
-                    // }
                 }
                 ctx.consumeAndRedraw();
             },
