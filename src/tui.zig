@@ -232,7 +232,6 @@ pub const Tui = struct {
         const max = ctx.max.size();
 
         var children: std.ArrayList(vxfw.SubSurface) = .empty;
-        var col: usize = 0;
         var row: i17 = 0;
 
         self.max_lines = max.height -| 5;
@@ -247,20 +246,31 @@ pub const Tui = struct {
 
         self.stream_view.records = viewable.items;
 
-        const up_time_str = try std.fmt.allocPrint(ctx.arena, "Up Time: {d:.1}", .{
+        const up_time_str = try std.fmt.allocPrint(ctx.arena, "  Up Time: {d:.1}s  ", .{
             if (self.stream_status == .Open)
                 @as(f64, @floatFromInt(self.up_time.untilNow(self.io, .awake).toMilliseconds())) / 1000
             else
                 0.0,
         });
+        const mode_str = if (self.stream_view.visual_mode) blk: {
+            const start = @min(self.stream_view.visual_anchor, self.stream_view.index);
+            const end = @max(self.stream_view.visual_anchor, self.stream_view.index);
+            break :blk try std.fmt.allocPrint(ctx.arena, " VISUAL {} lines ", .{end - start + 1});
+        } else " NORMAL ";
+
+        const bar_width = ctx.max.width.? -| 2;
+        const mode_offset = bar_width -| mode_str.len;
+        const bar_text = try ctx.arena.alloc(u8, bar_width);
+        @memset(bar_text, ' ');
+        @memcpy(bar_text[0..up_time_str.len], up_time_str);
+        @memcpy(bar_text[mode_offset..][0..mode_str.len], mode_str);
+
         try children.append(ctx.arena, .{
-            .origin = .{ .row = row, .col = @intCast(col) },
+            .origin = .{ .row = row, .col = 0 },
             .surface = try (vxfw.Border{
-                .child = (vxfw.Text{ .text = up_time_str }).widget(),
+                .child = (vxfw.Text{ .text = bar_text }).widget(),
             }).widget().draw(ctx.withConstraints(.{ .width = ctx.max.width.? }, ctx.max)),
         });
-
-        col += children.getLast().surface.size.width;
 
         if (self.stream_status == .Open) {
             try children.append(ctx.arena, .{
@@ -276,10 +286,8 @@ pub const Tui = struct {
             row += children.getLast().surface.size.height;
         }
 
-        col = 0;
-
         try children.append(ctx.arena, .{
-            .origin = .{ .row = row, .col = @intCast(col) },
+            .origin = .{ .row = row, .col = 0 },
             .surface = try (vxfw.Border{
                 .child = self.stream_view.widget(),
             }).widget().draw(ctx.withConstraints(ctx.min, ctx.max)),

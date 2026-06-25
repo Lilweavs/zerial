@@ -17,6 +17,8 @@ pub const State = enum {
 
 pub const StreamView = struct {
     index: usize = 0,
+    visual_mode: bool = false,
+    visual_anchor: usize = 0,
 
     records: []Record = &.{},
     snap: SnapMode = .Bot,
@@ -57,20 +59,56 @@ pub const StreamView = struct {
         return self.handleEvent(ctx, event);
     }
 
+    fn copySelection(self: *StreamView, ctx: *vxfw.EventContext) !void {
+        if (self.records.len == 0) return;
+        const start = @min(self.visual_anchor, self.index);
+        const end = @max(self.visual_anchor, self.index) + 1;
+        var total: usize = 0;
+        for (self.records[start..end]) |r| total += r.text.len + 1;
+        const buf = try ctx.alloc.alloc(u8, total);
+        var off: usize = 0;
+        for (self.records[start..end]) |r| {
+            @memcpy(buf[off..][0..r.text.len], r.text);
+            off += r.text.len;
+            buf[off] = '\n';
+            off += 1;
+        }
+        try ctx.copyToClipboard(buf[0..off]);
+        ctx.alloc.free(buf);
+    }
+
     pub fn handleEvent(self: *StreamView, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
         switch (event) {
             .key_press => |key| {
+                if (key.matches('v', .{})) {
+                    if (!self.visual_mode) {
+                        self.visual_mode = true;
+                        self.visual_anchor = self.index;
+                    } else {
+                        self.visual_mode = false;
+                    }
+                    return ctx.consumeAndRedraw();
+                }
+                if (key.matches(vaxis.Key.escape, .{})) {
+                    if (self.visual_mode) {
+                        self.visual_mode = false;
+                        return ctx.consumeAndRedraw();
+                    }
+                    return;
+                }
                 if (key.matches('j', .{})) {
                     self.index += 1;
                     if (self.index > self.records.len -| 1) {
                         self.index = self.records.len -| 1;
                         _ = try self.event_queue.tryPush(.ScrollDown);
                     }
+                    return ctx.consumeAndRedraw();
                 }
                 if (key.matches('k', .{})) {
                     if (self.index == 0) {
                         _ = try self.event_queue.tryPush(.ScrollUp);
                     } else self.index -= 1;
+                    return ctx.consumeAndRedraw();
                 }
                 if (key.matches('j', .{ .shift = true })) {
                     self.index += 5;
@@ -78,6 +116,7 @@ pub const StreamView = struct {
                         self.index = self.records.len -| 1;
                         _ = try self.event_queue.tryPush(.PageDown);
                     }
+                    return ctx.consumeAndRedraw();
                 }
                 if (key.matches('k', .{ .shift = true })) {
                     if (self.index >= 5) {
@@ -86,6 +125,15 @@ pub const StreamView = struct {
                         _ = try self.event_queue.tryPush(.PageUp);
                         self.index = 0;
                     }
+                    return ctx.consumeAndRedraw();
+                }
+                if (key.matches('y', .{})) {
+                    if (self.visual_mode) {
+                        try self.copySelection(ctx);
+                    } else if (self.records.len > 0) {
+                        try ctx.copyToClipboard(self.records[self.index].text);
+                    }
+                    return ctx.consumeAndRedraw();
                 }
                 ctx.consumeAndRedraw();
             },
@@ -103,6 +151,10 @@ pub const StreamView = struct {
         var row: i17 = 0;
 
         self.index = @min(self.index, self.records.len -| 1);
+        if (self.visual_mode) self.visual_anchor = @min(self.visual_anchor, self.records.len -| 1);
+
+        const sel_start = if (self.visual_mode) @min(self.visual_anchor, self.index) else self.index;
+        const sel_end = if (self.visual_mode) @max(self.visual_anchor, self.index) else self.index;
 
         for (self.records, 0..) |record, i| {
             var milliseconds = @mod(record.time, std.time.ms_per_day);
@@ -144,7 +196,7 @@ pub const StreamView = struct {
                         .fg = .{
                             .index = if (record.rxOrTx == .RX) 7 else 6,
                         },
-                        .reverse = self.index == i,
+                        .reverse = i >= sel_start and i <= sel_end,
                     },
                 }).widget().draw(ctx),
             });
