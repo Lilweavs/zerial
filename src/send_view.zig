@@ -61,7 +61,8 @@ pub const SendView = struct {
         switch (event) {
             .key_press => |key| {
                 if (self.show_history) {
-                    if (key.matches('j', .{ .ctrl = true }) or
+                    if (key.matches('d', .{ .ctrl = true }) or
+                        key.matches('j', .{ .ctrl = true }) or
                         key.matches('k', .{ .ctrl = true }) or
                         key.matches('e', .{ .ctrl = true }) or
                         key.matches(vaxis.Key.enter, .{ .ctrl = true }))
@@ -116,6 +117,29 @@ pub const SendView = struct {
                         const to_send = self.drop_down.list[self.drop_down.index];
 
                         _ = try self.write_queue.tryPush(try std.fmt.allocPrint(ctx.alloc, "{s}{s}", .{ to_send, getDelimiter(self.delimiter) }));
+                        return ctx.consumeAndRedraw();
+                    }
+
+                    if (key.matches('d', .{ .ctrl = true })) {
+                        if (self.drop_down.list.len == 0) return;
+
+                        const idx = self.drop_down.index;
+                        self.allocator.free(self.history_list[idx]);
+
+                        for (idx..self.history_list.len - 1) |i| {
+                            self.history_list[i] = self.history_list[i + 1];
+                        }
+                        self.history_list = try self.allocator.realloc(self.history_list, self.history_list.len - 1);
+
+                        self.filtered_list.clearRetainingCapacity();
+                        for (self.history_list) |h| {
+                            try self.filtered_list.append(self.allocator, h);
+                        }
+                        self.drop_down.list = self.filtered_list.items;
+
+                        if (self.drop_down.index >= self.history_list.len) {
+                            self.drop_down.index = self.history_list.len -| 1;
+                        }
                         return ctx.consumeAndRedraw();
                     }
 
