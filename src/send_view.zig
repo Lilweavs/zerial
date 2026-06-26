@@ -37,6 +37,10 @@ pub const SendView = struct {
         };
     }
 
+    fn isLineTerminator(s: []const u8) bool {
+        return std.mem.eql(u8, s, "\r\n") or std.mem.eql(u8, s, "\r") or std.mem.eql(u8, s, "\n");
+    }
+
     pub fn deinit(self: *SendView, allocator: Allocator) void {
         self.input.deinit();
         self.drop_down.list = &.{};
@@ -106,7 +110,7 @@ pub const SendView = struct {
                     return ctx.consumeAndRedraw();
                 }
 
-                if (key.matches('d', .{ .ctrl = true }) and !self.show_history) {
+                if (key.matches('l', .{ .ctrl = true })) {
                     var i: u2 = @intFromEnum(self.delimiter);
                     i +%= 1;
                     self.delimiter = @enumFromInt(i);
@@ -114,7 +118,7 @@ pub const SendView = struct {
                 }
 
                 if (self.show_history) {
-                    if (key.matches(vaxis.Key.enter, .{ .ctrl = true })) {
+                    if (key.matches(vaxis.Key.enter, .{ .ctrl = true }) or key.matches(vaxis.Key.enter, .{ .alt = true })) {
                         if (self.drop_down.list.len == 0) return;
 
                         const to_send = self.drop_down.list[self.drop_down.index];
@@ -185,6 +189,21 @@ pub const SendView = struct {
 
     pub fn onSendSubmit(ptr: ?*anyopaque, ctx: *vxfw.EventContext, str: []const u8) anyerror!void {
         const self: *SendView = @ptrCast(@alignCast(ptr));
+
+        const already_in_history = for (self.history_list) |h| {
+            if (std.mem.eql(u8, h, str)) break true;
+        } else false;
+
+        if (!already_in_history and str.len > 1 and !isLineTerminator(str)) {
+            self.history_list = try self.allocator.realloc(self.history_list, self.history_list.len + 1);
+            self.history_list[self.history_list.len - 1] = try self.allocator.dupe(u8, str);
+
+            self.filtered_list.clearRetainingCapacity();
+            for (self.history_list) |h| {
+                try self.filtered_list.append(self.allocator, h);
+            }
+            self.drop_down.list = self.filtered_list.items;
+        }
 
         _ = try self.write_queue.tryPush(try std.fmt.allocPrint(ctx.alloc, "{s}{s}", .{ str, getDelimiter(self.delimiter) }));
 

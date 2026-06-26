@@ -76,7 +76,7 @@ pub const SaveView = struct {
                         }
                     }
                     if (key.matches(vaxis.Key.tab, .{}) or key.matches(vaxis.Key.right, .{})) {
-                        self.save_button_idx = 1;
+                        self.save_button_idx = if (self.save_button_idx == 0) 1 else 0;
                         return ctx.consumeAndRedraw();
                     }
                     if (key.matches(vaxis.Key.left, .{})) {
@@ -99,33 +99,76 @@ pub const SaveView = struct {
     fn drawFn(self: *SaveView, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
         var children: std.ArrayList(vxfw.SubSurface) = .empty;
         var width: u16 = 0;
+        var surface_height: u16 = 1;
 
         if (self.save_sub_mode == .Buttons) {
-            const focus_style = vaxis.Style{ .fg = .{ .index = 15 }, .bg = .{ .index = 5 } };
+            const focus_style = vaxis.Style{ .fg = .{ .index = 0 }, .bg = .{ .index = 7 } };
+            const btn_width: u16 = 21;
+
+            const path_text = if (self.current_file) |file|
+                try std.fmt.allocPrint(ctx.arena, "file: {s}", .{file})
+            else
+                "";
+            const path_width: u16 = @intCast(path_text.len);
+            const total_width = @max(btn_width, path_width);
+
+            const btn_pad = (total_width -| btn_width) / 2;
+            var col = btn_pad;
+
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = 0, .col = col },
+                .surface = try (vxfw.Text{ .text = " " }).widget().draw(ctx),
+            });
+            col += 1;
+
             if (self.save_button_idx == 0) {
                 try children.append(ctx.arena, .{
-                    .origin = .{ .row = 0, .col = 0 },
-                    .surface = try (vxfw.Text{ .text = " [ Save ] ", .style = focus_style }).widget().draw(ctx),
+                    .origin = .{ .row = 0, .col = col },
+                    .surface = try (vxfw.Text{ .text = "[ Save ]", .style = focus_style }).widget().draw(ctx),
                 });
             } else {
                 try children.append(ctx.arena, .{
-                    .origin = .{ .row = 0, .col = 0 },
-                    .surface = try (vxfw.Text{ .text = " [ Save ] " }).widget().draw(ctx),
+                    .origin = .{ .row = 0, .col = col },
+                    .surface = try (vxfw.Text{ .text = "[ Save ]" }).widget().draw(ctx),
                 });
             }
-            width = children.getLast().surface.size.width;
+            col += "[ Save ]".len;
+
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = 0, .col = col },
+                .surface = try (vxfw.Text{ .text = "  " }).widget().draw(ctx),
+            });
+            col += 2;
+
             if (self.save_button_idx == 1) {
                 try children.append(ctx.arena, .{
-                    .origin = .{ .row = 0, .col = width },
-                    .surface = try (vxfw.Text{ .text = " [ Save As ] ", .style = focus_style }).widget().draw(ctx),
+                    .origin = .{ .row = 0, .col = col },
+                    .surface = try (vxfw.Text{ .text = "[ Save As ]", .style = focus_style }).widget().draw(ctx),
                 });
             } else {
                 try children.append(ctx.arena, .{
-                    .origin = .{ .row = 0, .col = width },
-                    .surface = try (vxfw.Text{ .text = " [ Save As ] " }).widget().draw(ctx),
+                    .origin = .{ .row = 0, .col = col },
+                    .surface = try (vxfw.Text{ .text = "[ Save As ]" }).widget().draw(ctx),
                 });
             }
-            width += children.getLast().surface.size.width;
+            col += "[ Save As ]".len;
+
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = 0, .col = col },
+                .surface = try (vxfw.Text{ .text = " " }).widget().draw(ctx),
+            });
+            col += 1;
+
+            if (path_width > 0) {
+                const path_col = (total_width -| path_width) / 2;
+                try children.append(ctx.arena, .{
+                    .origin = .{ .row = 1, .col = path_col },
+                    .surface = try (vxfw.Text{ .text = path_text, .style = vaxis.Style{ .fg = .{ .index = 8 } } }).widget().draw(ctx),
+                });
+            }
+
+            width = total_width;
+            surface_height = if (self.current_file != null) 2 else 1;
         } else {
             const label = "save as:";
             try children.append(ctx.arena, .{
@@ -141,7 +184,7 @@ pub const SaveView = struct {
         }
 
         return .{
-            .size = .{ .width = width, .height = 1 },
+            .size = .{ .width = width, .height = surface_height },
             .widget = self.widget(),
             .buffer = &.{},
             .children = children.items,

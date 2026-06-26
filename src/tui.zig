@@ -141,6 +141,7 @@ pub const Tui = struct {
             .allocator = allocator,
             .appdata_dir = self.appdata_dir,
             .history_list = &self.send_view.history_list,
+            .current_file_ptr = &self.save_view.current_file,
         };
         try self.load_view.loadLastHistory(io);
     }

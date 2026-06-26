@@ -14,6 +14,7 @@ pub const LoadView = struct {
     allocator: Allocator,
     appdata_dir: []const u8 = &.{},
     history_list: *[][]const u8,
+    current_file_ptr: *?[]const u8 = undefined,
 
     pub fn deinit(self: *LoadView, allocator: Allocator) void {
         self.file_dropdown.list = &.{};
@@ -128,6 +129,8 @@ pub const LoadView = struct {
         for (self.history_list.*) |h| self.allocator.free(h);
         self.allocator.free(self.history_list.*);
         self.history_list.* = try lines.toOwnedSlice(self.allocator);
+        if (self.current_file_ptr.*) |f| self.allocator.free(f);
+        self.current_file_ptr.* = try self.allocator.dupe(u8, name);
         try self.writeMetadata(io, name);
     }
 
