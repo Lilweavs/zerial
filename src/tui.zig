@@ -355,7 +355,7 @@ pub const Tui = struct {
             .origin = .{ .row = row, .col = 0 },
             .surface = try (vxfw.Border{
                 .child = self.stream_view.widget(),
-            }).widget().draw(ctx.withConstraints(ctx.min, ctx.max)),
+            }).widget().draw(ctx.withConstraints(ctx.min, .{ .width = ctx.max.width.?, .height = max.height -| @as(u16, @intCast(row)) })),
         });
 
         if (self.state == .Configuration) {

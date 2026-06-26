@@ -206,7 +206,7 @@ pub const StreamView = struct {
         }
 
         return .{
-            .size = .{ .width = ctx.max.width.?, .height = @intCast(row) },
+            .size = .{ .width = ctx.max.width.?, .height = ctx.max.height.? },
             .widget = self.widget(),
             .buffer = &.{},
             .children = children.items,
