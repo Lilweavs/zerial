@@ -300,6 +300,7 @@ pub const Tui = struct {
         var row: i17 = 0;
 
         self.max_lines = max.height -| 5;
+        self.ascii_offset = @max(self.ascii_offset, @min(self.max_lines, self.records.size));
 
         var viewable = try std.ArrayList(Record).initCapacity(ctx.arena, ctx.max.height.?);
         var iter = self.records.iterator(self.ascii_offset);
