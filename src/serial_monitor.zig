@@ -1,7 +1,7 @@
 const std = @import("std");
 const vaxis = @import("vaxis");
 
-const Record = @import("record.zig");
+const Record = @import("record.zig").Record;
 
 const Allocator = std.mem.Allocator;
 

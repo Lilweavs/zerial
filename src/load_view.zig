@@ -13,7 +13,9 @@ pub const LoadView = struct {
     event_queue: *EventQueue,
     allocator: Allocator,
     appdata_dir: []const u8 = &.{},
-    history_list: *[][]const u8,
+    history_list: *std.ArrayList([]const u8),
+    filtered_list_ptr: *std.ArrayList([]const u8),
+    drop_down_list_ptr: *[][]const u8,
     current_file_ptr: *?[]const u8 = undefined,
 
     pub fn deinit(self: *LoadView, allocator: Allocator) void {
@@ -119,16 +121,23 @@ pub const LoadView = struct {
         const data = try dir.readFileAlloc(io, name, self.allocator, @enumFromInt(1024 * 1024));
         defer self.allocator.free(data);
 
-        var lines: std.ArrayList([]const u8) = .empty;
+        for (self.history_list.*.items) |h| self.allocator.free(h);
+        self.history_list.*.clearAndFree(self.allocator);
+
         var iter = std.mem.splitScalar(u8, data, '\n');
         while (iter.next()) |line| {
             if (line.len > 0) {
-                try lines.append(self.allocator, try self.allocator.dupe(u8, line));
+                try self.history_list.*.append(self.allocator, try self.allocator.dupe(u8, line));
             }
         }
-        for (self.history_list.*) |h| self.allocator.free(h);
-        self.allocator.free(self.history_list.*);
-        self.history_list.* = try lines.toOwnedSlice(self.allocator);
+
+        // Rebuild send_view's filtered_list and dropdown list to match the new history
+        self.filtered_list_ptr.*.clearRetainingCapacity();
+        for (self.history_list.*.items) |h| {
+            try self.filtered_list_ptr.*.append(self.allocator, h);
+        }
+        self.drop_down_list_ptr.* = self.filtered_list_ptr.*.items;
+
         if (self.current_file_ptr.*) |f| self.allocator.free(f);
         self.current_file_ptr.* = try self.allocator.dupe(u8, name);
         try self.writeMetadata(io, name);

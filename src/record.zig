@@ -3,6 +3,8 @@ pub const RxOrTx = enum {
     TX,
 };
 
-text: []const u8,
-time: i64,
-rxOrTx: RxOrTx,
+pub const Record = struct {
+    text: []const u8,
+    time: i64,
+    rxOrTx: RxOrTx,
+};

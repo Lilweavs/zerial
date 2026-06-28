@@ -67,10 +67,8 @@ fn read(ctx: *anyopaque, io: std.Io, buf: []u8) !usize {
 
 fn write(ctx: *anyopaque, io: std.Io, buf: []const u8) !usize {
     const self: *Self = @ptrCast(@alignCast(ctx));
-    _ = io;
-    _ = self;
-    _ = buf;
-    return 0;
+    try self.port.writeStreamingAll(io, buf);
+    return buf.len;
 }
 
 fn close(ctx: *anyopaque, io: std.Io, allocator: Allocator) void {

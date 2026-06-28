@@ -13,7 +13,7 @@ pub const SendView = struct {
     input: vxfw.TextField,
     show_history: bool = false,
     drop_down: DropDown = .{},
-    history_list: [][]const u8 = &.{},
+    history_list: std.ArrayList([]const u8) = .empty,
     filtered_list: std.ArrayList([]const u8) = .empty,
     event_queue: *EventQueue,
     write_queue: *vaxis.Queue([]const u8, 8) = undefined,
@@ -45,8 +45,8 @@ pub const SendView = struct {
         self.input.deinit();
         self.drop_down.list = &.{};
         self.drop_down.deinit(allocator);
-        for (self.history_list) |h| allocator.free(h);
-        allocator.free(self.history_list);
+        for (self.history_list.items) |h| allocator.free(h);
+        self.history_list.deinit(allocator);
         self.filtered_list.deinit(allocator);
     }
 
@@ -93,7 +93,7 @@ pub const SendView = struct {
                 self.input.userdata = self;
                 self.input.onChange = onChange;
                 self.input.onSubmit = onSendSubmit;
-                self.drop_down.list = self.history_list;
+                self.drop_down.list = self.history_list.items;
             },
             .key_press => |key| {
                 if (key.matches(vaxis.Key.escape, .{})) {
@@ -131,21 +131,17 @@ pub const SendView = struct {
                         if (self.drop_down.list.len == 0) return;
 
                         const idx = self.drop_down.index;
-                        self.allocator.free(self.history_list[idx]);
-
-                        for (idx..self.history_list.len - 1) |i| {
-                            self.history_list[i] = self.history_list[i + 1];
-                        }
-                        self.history_list = try self.allocator.realloc(self.history_list, self.history_list.len - 1);
+                        self.allocator.free(self.history_list.items[idx]);
+                        _ = self.history_list.orderedRemove(idx);
 
                         self.filtered_list.clearRetainingCapacity();
-                        for (self.history_list) |h| {
+                        for (self.history_list.items) |h| {
                             try self.filtered_list.append(self.allocator, h);
                         }
                         self.drop_down.list = self.filtered_list.items;
 
-                        if (self.drop_down.index >= self.history_list.len) {
-                            self.drop_down.index = self.history_list.len -| 1;
+                        if (self.drop_down.index >= self.history_list.items.len) {
+                            self.drop_down.index = self.history_list.items.len -| 1;
                         }
                         return ctx.consumeAndRedraw();
                     }
@@ -190,16 +186,15 @@ pub const SendView = struct {
     pub fn onSendSubmit(ptr: ?*anyopaque, ctx: *vxfw.EventContext, str: []const u8) anyerror!void {
         const self: *SendView = @ptrCast(@alignCast(ptr));
 
-        const already_in_history = for (self.history_list) |h| {
+        const already_in_history = for (self.history_list.items) |h| {
             if (std.mem.eql(u8, h, str)) break true;
         } else false;
 
         if (!already_in_history and str.len > 1 and !isLineTerminator(str)) {
-            self.history_list = try self.allocator.realloc(self.history_list, self.history_list.len + 1);
-            self.history_list[self.history_list.len - 1] = try self.allocator.dupe(u8, str);
+            try self.history_list.append(self.allocator, try self.allocator.dupe(u8, str));
 
             self.filtered_list.clearRetainingCapacity();
-            for (self.history_list) |h| {
+            for (self.history_list.items) |h| {
                 try self.filtered_list.append(self.allocator, h);
             }
             self.drop_down.list = self.filtered_list.items;
@@ -214,13 +209,13 @@ pub const SendView = struct {
         const self: *SendView = @ptrCast(@alignCast(ptr));
         self.filtered_list.clearRetainingCapacity();
         if (str.len > 0) {
-            const filtered = try fuzz.fuzzList(self.history_list, str, ctx.alloc);
+            const filtered = try fuzz.fuzzList(self.history_list.items, str, ctx.alloc);
             defer ctx.alloc.free(filtered);
             for (filtered) |item| {
-                try self.filtered_list.append(self.allocator, self.history_list[item.idx]);
+                try self.filtered_list.append(self.allocator, self.history_list.items[item.idx]);
             }
         } else {
-            for (self.history_list) |h| {
+            for (self.history_list.items) |h| {
                 try self.filtered_list.append(self.allocator, h);
             }
         }

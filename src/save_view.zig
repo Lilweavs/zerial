@@ -19,7 +19,7 @@ pub const SaveView = struct {
     event_queue: *EventQueue,
     allocator: Allocator,
     appdata_dir: []const u8 = &.{},
-    history_list: *[][]const u8,
+    history_list: *std.ArrayList([]const u8),
 
     pub fn deinit(self: *SaveView, allocator: Allocator) void {
         self.input.deinit();
@@ -196,7 +196,7 @@ pub const SaveView = struct {
         defer self.allocator.free(path);
         var file = try std.Io.Dir.createFileAbsolute(io, path, .{});
         defer file.close(io);
-        for (self.history_list.*) |line| {
+        for (self.history_list.*.items) |line| {
             _ = try file.writeStreamingAll(io, line);
             _ = try file.writeStreamingAll(io, "\n");
         }

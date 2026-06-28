@@ -97,6 +97,17 @@ pub const ConfigView = struct {
         return self.handleEvent(ctx, event);
     }
 
+    fn handleDropdown(self: *ConfigView, ctx: *vxfw.EventContext, key: vaxis.Key, dd: *DropDown) !void {
+        if (dd.is_expanded) {
+            try dd.handleEvent(ctx, .{ .key_press = key });
+        } else {
+            if (key.matches(vaxis.Key.enter, .{})) {
+                dd.is_expanded = true;
+            }
+            self.moveFocus(ctx, key);
+        }
+    }
+
     pub fn handleEvent(self: *ConfigView, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
         switch (event) {
             .init => {
@@ -134,56 +145,11 @@ pub const ConfigView = struct {
                         }
                         self.moveFocus(ctx, key);
                     },
-                    1 => {
-                        if (self.port_dropdown.is_expanded) {
-                            try self.port_dropdown.handleEvent(ctx, event);
-                        } else {
-                            if (key.matches(vaxis.Key.enter, .{})) {
-                                self.port_dropdown.is_expanded = true;
-                            }
-                            self.moveFocus(ctx, key);
-                        }
-                    },
-                    2 => {
-                        if (self.baudrate_dropdown.is_expanded) {
-                            try self.baudrate_dropdown.handleEvent(ctx, event);
-                        } else {
-                            if (key.matches(vaxis.Key.enter, .{})) {
-                                self.baudrate_dropdown.is_expanded = true;
-                            }
-                            self.moveFocus(ctx, key);
-                        }
-                    },
-                    3 => {
-                        if (self.databits_dropdown.is_expanded) {
-                            try self.databits_dropdown.handleEvent(ctx, event);
-                        } else {
-                            if (key.matches(vaxis.Key.enter, .{})) {
-                                self.databits_dropdown.is_expanded = true;
-                            }
-                            self.moveFocus(ctx, key);
-                        }
-                    },
-                    4 => {
-                        if (self.parity_dropdown.is_expanded) {
-                            try self.parity_dropdown.handleEvent(ctx, event);
-                        } else {
-                            if (key.matches(vaxis.Key.enter, .{})) {
-                                self.parity_dropdown.is_expanded = true;
-                            }
-                            self.moveFocus(ctx, key);
-                        }
-                    },
-                    5 => {
-                        if (self.stopbits_dropdown.is_expanded) {
-                            try self.stopbits_dropdown.handleEvent(ctx, event);
-                        } else {
-                            if (key.matches(vaxis.Key.enter, .{})) {
-                                self.stopbits_dropdown.is_expanded = true;
-                            }
-                            self.moveFocus(ctx, key);
-                        }
-                    },
+                    1 => try self.handleDropdown(ctx, key, &self.port_dropdown),
+                    2 => try self.handleDropdown(ctx, key, &self.baudrate_dropdown),
+                    3 => try self.handleDropdown(ctx, key, &self.databits_dropdown),
+                    4 => try self.handleDropdown(ctx, key, &self.parity_dropdown),
+                    5 => try self.handleDropdown(ctx, key, &self.stopbits_dropdown),
                     else => {},
                 }
             },
