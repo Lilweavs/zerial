@@ -2,23 +2,13 @@ const std = @import("std");
 const vaxis = @import("vaxis");
 
 const Serial = @import("serial.zig");
-const Stream = @import("stream.zig").Stream;
 const Record = @import("record.zig").Record;
-const CircularArray = @import("circular_array.zig").CircularArray;
-const RecordArray = CircularArray(Record);
-
-const NewLineIterator = @import("line_iter.zig").NewLineIterator;
-
-const ser_utils = @import("serial");
+const RecordStore = @import("record_store.zig").RecordStore;
+const StreamManager = @import("stream_manager.zig").StreamManager;
 
 const Allocator = std.mem.Allocator;
 
 const vxfw = vaxis.vxfw;
-
-const StreamStatus = enum(u8) {
-    Closed = 0,
-    Open = 1,
-};
 
 const ZerialState = enum {
     Home,
@@ -58,27 +48,11 @@ pub const Tui = struct {
 
     event_queue: EventQueue,
 
-    stream: ?Stream = null,
-    stream_status: std.atomic.Value(u8) = std.atomic.Value(u8).init(@intFromEnum(StreamStatus.Closed)),
-
-    records: RecordArray,
+    record_store: RecordStore,
+    stream_manager: StreamManager,
 
     state: ZerialState = .Home,
 
-    write_queue: vaxis.Queue([]const u8, 8),
-    read_queue: vaxis.Queue(Record, 64),
-
-    reader_thread: ?std.Thread = null,
-    writer_thread: ?std.Thread = null,
-
-    read_buffer: [1024 * 32]u8 = undefined,
-
-    last_error: ?anyerror = null,
-
-    up_time: std.Io.Timestamp = .zero,
-
-    ascii_offset: usize = 10,
-    max_lines: usize = 1,
     pub fn widget(self: *Tui) vxfw.Widget {
         return .{
             .userdata = self,
@@ -114,9 +88,8 @@ pub const Tui = struct {
             },
             .save_view = undefined,
             .load_view = undefined,
-            .records = try RecordArray.initCapacity(allocator, 1024),
-            .read_queue = .init(io),
-            .write_queue = .init(io),
+            .record_store = try RecordStore.init(allocator),
+            .stream_manager = StreamManager.init(io, allocator),
             .appdata_dir = try allocator.dupe(u8, appdata_dir),
         };
         errdefer allocator.free(self.appdata_dir);
@@ -127,7 +100,7 @@ pub const Tui = struct {
         self.stream_view.event_queue = &self.event_queue;
         self.config_view.event_queue = &self.event_queue;
         self.send_view.event_queue = &self.event_queue;
-        self.send_view.write_queue = &self.write_queue;
+        self.send_view.write_queue = &self.stream_manager.write_queue;
         self.send_view.appdata_dir = self.appdata_dir;
         for (history_commands) |cmd| {
             try self.send_view.history_list.append(allocator, try allocator.dupe(u8, cmd));
@@ -151,33 +124,17 @@ pub const Tui = struct {
         try self.load_view.loadLastHistory(io);
 
         if (serial_opts.port.len > 0) {
-            self.stream = Serial.openStream(self.io, self.allocator, serial_opts) catch |e| {
-                self.last_error = e;
+            self.stream_manager.open(serial_opts) catch |e| {
+                self.stream_manager.last_error = e;
                 return;
             };
-            self.stream_status.store(@intFromEnum(StreamStatus.Open), .monotonic);
             self.config_view.is_stream_open = true;
-            self.up_time = std.Io.Timestamp.now(self.io, .awake);
-            self.last_error = null;
-            self.reader_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, Tui.streamReaderThread, .{self});
-            self.writer_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, Tui.streamWriterThread, .{self});
         }
     }
 
     pub fn deinit(self: *Tui) void {
-        self.stream_status.store(@intFromEnum(StreamStatus.Closed), .monotonic);
-        if (self.stream) |s| s.close(self.io, self.allocator);
-        while (self.records.popOrNull()) |r| {
-            self.allocator.free(r.text);
-        }
-        self.records.deinit();
-        while (self.write_queue.drain()) |ptr| {
-            self.allocator.free(ptr);
-        } else {}
-        while (self.read_queue.drain()) |r| {
-            self.allocator.free(r.text);
-        }
-
+        self.stream_manager.deinit();
+        self.record_store.deinit(self.allocator);
         self.config_view.deinit(self.allocator);
         self.send_view.deinit(self.allocator);
         self.save_view.deinit(self.allocator);
@@ -201,36 +158,29 @@ pub const Tui = struct {
             },
             .tick => {
                 try ctx.tick(std.time.ms_per_s / 60, self.widget());
-                while (try self.read_queue.tryPop()) |record| {
-                    try self.addRecord(record);
+                while (try self.stream_manager.read_queue.tryPop()) |record| {
+                    try self.record_store.addRecord(self.allocator, record);
                 }
 
                 while (try self.event_queue.tryPop()) |tevent| {
                     switch (tevent) {
-                        .ScrollUp => self.ascii_offset = @min(self.ascii_offset + 1, @max(self.records.size, self.records.size -| self.max_lines)),
-                        .ScrollDown => self.ascii_offset = @max(self.max_lines, self.ascii_offset -| 1),
-                        .PageUp => self.ascii_offset = @min(self.ascii_offset + self.max_lines, @max(self.records.size, self.records.size -| self.max_lines)),
-                        .PageDown => self.ascii_offset = @max(self.max_lines, self.ascii_offset -| self.max_lines),
+                        .ScrollUp => self.record_store.scrollUp(),
+                        .ScrollDown => self.record_store.scrollDown(),
+                        .PageUp => self.record_store.pageUp(),
+                        .PageDown => self.record_store.pageDown(),
                         .StreamOpenClose => {
-                            if (self.stream_status.load(.monotonic) == @intFromEnum(StreamStatus.Closed)) {
+                            if (!self.stream_manager.isOpen()) {
                                 const cfg = self.config_view.getSerialConfigOptions();
 
-                                self.stream = Serial.openStream(self.io, self.allocator, cfg) catch |e| {
-                                    self.last_error = e;
+                                self.stream_manager.open(cfg) catch |e| {
+                                    self.stream_manager.last_error = e;
                                     return ctx.consumeAndRedraw();
                                 };
-                                self.stream_status.store(@intFromEnum(StreamStatus.Open), .monotonic);
                                 self.config_view.is_stream_open = true;
                                 self.state = .Home;
                                 try ctx.requestFocus(self.widget());
-                                self.up_time = std.Io.Timestamp.now(self.io, .awake);
-                                self.last_error = null;
-
-                                self.reader_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, Tui.streamReaderThread, .{self});
-
-                                self.writer_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, Tui.streamWriterThread, .{self});
                             } else {
-                                self.closeStream();
+                                self.stream_manager.close();
                                 self.config_view.is_stream_open = false;
                             }
                         },
@@ -317,24 +267,11 @@ pub const Tui = struct {
         var children: std.ArrayList(vxfw.SubSurface) = .empty;
         var row: i17 = 0;
 
-        self.max_lines = max.height -| 5;
-        self.ascii_offset = @max(self.ascii_offset, @min(self.max_lines, self.records.size));
-
-        var viewable = try std.ArrayList(Record).initCapacity(ctx.arena, ctx.max.height.?);
-        var iter = self.records.iterator(self.ascii_offset);
-
-        for (0..max.height -| 5) |_| {
-            const line = iter.next() orelse break;
-            try viewable.append(ctx.arena, line);
-        }
-
-        self.stream_view.records = viewable.items;
+        const viewable_records = try self.record_store.viewable(ctx.arena, max.height);
+        self.stream_view.records = viewable_records;
 
         const up_time_str = try std.fmt.allocPrint(ctx.arena, "  Up Time: {d:.1}s  ", .{
-            if (self.stream_status.load(.monotonic) == @intFromEnum(StreamStatus.Open))
-                @as(f64, @floatFromInt(self.up_time.untilNow(self.io, .awake).toMilliseconds())) / 1000
-            else
-                0.0,
+            self.stream_manager.upTimeSeconds(),
         });
         const mode_str = if (self.stream_view.visual_mode) blk: {
             const start = @min(self.stream_view.visual_anchor, self.stream_view.index);
@@ -356,11 +293,11 @@ pub const Tui = struct {
             }).widget().draw(ctx.withConstraints(.{ .width = ctx.max.width.? }, ctx.max)),
         });
 
-        if (self.stream_status.load(.monotonic) == @intFromEnum(StreamStatus.Open)) {
+        if (self.stream_manager.isOpen()) {
             try children.append(ctx.arena, .{
                 .origin = .{ .row = row + 1, .col = @intCast(up_time_str.len + 2) },
                 .surface = try (vxfw.Text{
-                    .text = self.stream.?.status(ctx.arena) catch {
+                    .text = self.stream_manager.statusText(ctx.arena) catch {
                         return error.OutOfMemory;
                     },
                 }).widget().draw(ctx),
@@ -424,73 +361,5 @@ pub const Tui = struct {
             .buffer = &.{},
             .children = children.items,
         };
-    }
-
-    /// records are gauranteed to not have multiple new lines. They will either be
-    /// 1. msg
-    /// 2. msg + \n
-    pub fn addRecord(self: *Tui, record: Record) !void {
-        if (self.records.getPtrOrNull(self.records.size -| 1)) |tail| {
-            if (record.rxOrTx != tail.rxOrTx or tail.text[tail.text.len -| 1] == '\n') {
-                if (self.records.pushDropOldest(record)) |r| self.allocator.free(r.text);
-            } else {
-                const merged_record = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ tail.text, record.text });
-                self.allocator.free(tail.text);
-                self.allocator.free(record.text);
-                tail.text = merged_record;
-            }
-        } else {
-            if (self.records.pushDropOldest(record)) |r| self.allocator.free(r.text);
-        }
-    }
-
-    pub fn closeStream(self: *Tui) void {
-        self.stream_status.store(@intFromEnum(StreamStatus.Closed), .monotonic);
-        if (self.stream) |s| s.close(self.io, self.allocator);
-        self.stream = null;
-    }
-
-    fn streamWriterThread(self: *Tui) !void {
-        while (self.stream_status.load(.monotonic) == @intFromEnum(StreamStatus.Open)) {
-            const msg = try self.write_queue.tryPop() orelse {
-                try self.io.sleep(.fromMilliseconds(1), .awake);
-                continue;
-            };
-            errdefer self.allocator.free(msg);
-
-            const stream = self.stream orelse break;
-            _ = try stream.write(self.io, msg);
-            if (try self.read_queue.tryPush(.{
-                .rxOrTx = .TX,
-                .text = msg,
-                .time = std.Io.Timestamp.now(self.io, .awake).toMilliseconds(),
-            }) == false) {
-                self.allocator.free(msg);
-            }
-        }
-    }
-
-    pub fn streamReaderThread(self: *Tui) !void {
-        while (self.stream_status.load(.monotonic) == @intFromEnum(StreamStatus.Open)) {
-            const stream = self.stream orelse break;
-            const bytes_read = stream.read(self.io, &self.read_buffer) catch |e| switch (e) {
-                error.InputOutput, error.BrokenPipe, error.ConnectionResetByPeer => break,
-                else => |err| return err,
-            };
-            if (bytes_read == 0) break;
-
-            var iter: NewLineIterator = .init(self.read_buffer[0..bytes_read]);
-            while (iter.next()) |line| {
-                const msg = try self.allocator.dupe(u8, line);
-                errdefer self.allocator.free(msg);
-                if (try self.read_queue.tryPush(.{
-                    .rxOrTx = .RX,
-                    .text = msg,
-                    .time = std.Io.Timestamp.now(self.io, .real).toMilliseconds(),
-                }) == false) {
-                    self.allocator.free(msg);
-                }
-            }
-        }
     }
 };
