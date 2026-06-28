@@ -52,6 +52,7 @@ pub const StreamManager = struct {
     }
 
     pub fn open(self: *StreamManager, cfg: Serial.Options) !void {
+        self.last_error = null;
         self.stream = try Serial.openStream(self.io, self.allocator, cfg);
         self.stream_status.store(@intFromEnum(StreamStatus.Open), .monotonic);
         self.up_time = std.Io.Timestamp.now(self.io, .awake);
@@ -60,6 +61,7 @@ pub const StreamManager = struct {
     }
 
     pub fn close(self: *StreamManager) void {
+        self.last_error = null;
         self.stream_status.store(@intFromEnum(StreamStatus.Closed), .monotonic);
         if (self.stream) |s| s.close(self.io, self.allocator);
         self.stream = null;
