@@ -35,6 +35,77 @@ const TuiEvent = enum {
 
 pub const EventQueue = vaxis.Queue(TuiEvent, 8);
 
+const StatusBar = struct {
+    up_time: []const u8,
+    error_msg: []const u8,
+    mode: []const u8,
+    mode_offset: usize,
+    bar_width: usize,
+
+    fn drawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
+        const self: *StatusBar = @ptrCast(@alignCast(ptr));
+        var ns: std.ArrayList(vxfw.SubSurface) = .empty;
+
+        if (self.up_time.len > 0) {
+            try ns.append(ctx.arena, .{
+                .origin = .{ .row = 0, .col = 0 },
+                .surface = try (vxfw.Text{ .text = self.up_time }).widget().draw(ctx),
+            });
+        }
+
+        if (self.error_msg.len > 0) {
+            try ns.append(ctx.arena, .{
+                .origin = .{ .row = 0, .col = @intCast(self.up_time.len) },
+                .surface = try (vxfw.Text{
+                    .text = self.error_msg,
+                    .style = .{ .fg = .{ .index = 1 } },
+                }).widget().draw(ctx),
+            });
+        }
+
+        const error_end = self.up_time.len +| self.error_msg.len;
+        if (self.mode_offset > error_end) {
+            const pad_len = self.mode_offset - error_end;
+            const pad = try ctx.arena.alloc(u8, pad_len);
+            @memset(pad, ' ');
+            try ns.append(ctx.arena, .{
+                .origin = .{ .row = 0, .col = @intCast(error_end) },
+                .surface = try (vxfw.Text{ .text = pad }).widget().draw(ctx),
+            });
+        }
+
+        if (self.mode.len > 0) {
+            try ns.append(ctx.arena, .{
+                .origin = .{ .row = 0, .col = @intCast(self.mode_offset) },
+                .surface = try (vxfw.Text{ .text = self.mode }).widget().draw(ctx),
+            });
+        }
+
+        return .{
+            .size = .{ .width = @intCast(self.bar_width), .height = 1 },
+            .widget = .{
+                .userdata = self,
+                .eventHandler = struct {
+                    fn eh(_: *anyopaque, _: *vxfw.EventContext, _: vxfw.Event) anyerror!void {}
+                }.eh,
+                .drawFn = drawFn,
+            },
+            .buffer = &.{},
+            .children = ns.items,
+        };
+    }
+
+    fn widget(self: *StatusBar) vxfw.Widget {
+        return .{
+            .userdata = self,
+            .eventHandler = struct {
+                fn eh(_: *anyopaque, _: *vxfw.EventContext, _: vxfw.Event) anyerror!void {}
+            }.eh,
+            .drawFn = drawFn,
+        };
+    }
+};
+
 pub const Tui = struct {
     allocator: Allocator,
     io: std.Io,
@@ -273,6 +344,12 @@ pub const Tui = struct {
         const up_time_str = try std.fmt.allocPrint(ctx.arena, "  Up Time: {d:.1}s  ", .{
             self.stream_manager.upTimeSeconds(),
         });
+
+        const error_str = if (self.stream_manager.last_error) |e|
+            try std.fmt.allocPrint(ctx.arena, "Error: {s}  ", .{@errorName(e)})
+        else
+            "";
+
         const mode_str = if (self.stream_view.visual_mode) blk: {
             const start = @min(self.stream_view.visual_anchor, self.stream_view.index);
             const end = @max(self.stream_view.visual_anchor, self.stream_view.index);
@@ -281,15 +358,20 @@ pub const Tui = struct {
 
         const bar_width = ctx.max.width.? -| 2;
         const mode_offset = bar_width -| mode_str.len;
-        const bar_text = try ctx.arena.alloc(u8, bar_width);
-        @memset(bar_text, ' ');
-        @memcpy(bar_text[0..up_time_str.len], up_time_str);
-        @memcpy(bar_text[mode_offset..][0..mode_str.len], mode_str);
+
+        const bar_row = try ctx.arena.create(StatusBar);
+        bar_row.* = .{
+            .up_time = up_time_str,
+            .error_msg = error_str,
+            .mode = mode_str,
+            .mode_offset = mode_offset,
+            .bar_width = bar_width,
+        };
 
         try children.append(ctx.arena, .{
             .origin = .{ .row = row, .col = 0 },
             .surface = try (vxfw.Border{
-                .child = (vxfw.Text{ .text = bar_text }).widget(),
+                .child = bar_row.widget(),
             }).widget().draw(ctx.withConstraints(.{ .width = ctx.max.width.? }, ctx.max)),
         });
 
