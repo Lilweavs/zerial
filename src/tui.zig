@@ -132,14 +132,6 @@ pub const Tui = struct {
         };
     }
 
-    const history_commands = [_][]const u8{
-        "eth remote 192.168.1.1",
-        "eth stats",
-        "eth info",
-        "adc info",
-        "adc on",
-    };
-
     pub fn init(self: *Tui, io: std.Io, allocator: Allocator, appdata_dir: []const u8, serial_opts: Serial.Options) !void {
         self.* = .{
             .allocator = allocator,
@@ -173,9 +165,6 @@ pub const Tui = struct {
         self.send_view.event_queue = &self.event_queue;
         self.send_view.write_queue = &self.stream_manager.write_queue;
         self.send_view.appdata_dir = self.appdata_dir;
-        for (history_commands) |cmd| {
-            try self.send_view.history_list.append(allocator, try allocator.dupe(u8, cmd));
-        }
         self.save_view = .{
             .input = .{ .buf = .init(allocator) },
             .event_queue = &self.event_queue,
