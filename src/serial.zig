@@ -14,6 +14,7 @@ bw_rate: u64 = 0,
 const Self = @This();
 
 var options = Options{};
+var port_name: ?[]u8 = null;
 
 pub fn openStream(io: std.Io, allocator: Allocator, opts: Options) !Stream {
     const serial = try allocator.create(Self);
@@ -47,7 +48,11 @@ pub fn openStream(io: std.Io, allocator: Allocator, opts: Options) !Stream {
         _ = SetCommTimeouts(serial.port.handle, &timeouts);
     }
 
+    const new_port = try allocator.dupe(u8, opts.port);
+    if (port_name) |p| allocator.free(p);
+    port_name = new_port;
     options = opts;
+    options.port = port_name.?;
     return .{
         .ctx = serial,
         .readFn = read,
@@ -75,6 +80,10 @@ fn close(ctx: *anyopaque, io: std.Io, allocator: Allocator) void {
     const self: *Self = @ptrCast(@alignCast(ctx));
     self.port.close(io);
     allocator.destroy(self);
+    if (port_name) |p| {
+        allocator.free(p);
+        port_name = null;
+    }
 }
 
 fn status(ctx: *anyopaque, allocator: Allocator) anyerror![]const u8 {
