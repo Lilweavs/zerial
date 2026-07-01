@@ -2,6 +2,7 @@ const std = @import("std");
 const vaxis = @import("vaxis");
 const Allocator = std.mem.Allocator;
 const vxfw = vaxis.vxfw;
+const history_format = @import("history_format.zig");
 
 const TuiEvent = @import("tui.zig");
 const EventQueue = TuiEvent.EventQueue;
@@ -197,7 +198,9 @@ pub const SaveView = struct {
         var file = try std.Io.Dir.createFileAbsolute(io, path, .{});
         defer file.close(io);
         for (self.history_list.*.items) |line| {
-            _ = try file.writeStreamingAll(io, line);
+            const escaped = try history_format.escapeForFile(line, self.allocator);
+            defer self.allocator.free(escaped);
+            _ = try file.writeStreamingAll(io, escaped);
             _ = try file.writeStreamingAll(io, "\n");
         }
         try self.writeMetadata(io, name);

@@ -315,7 +315,15 @@ pub const Tui = struct {
                 }
                 _ = try self.stream_view.handleEvent(ctx, event);
             },
-            else => {},
+            else => {
+                switch (self.state) {
+                    .SendView => try self.send_view.handleEvent(ctx, event),
+                    .Configuration => try self.config_view.handleEvent(ctx, event),
+                    .SaveOverlay => try self.save_view.handleEvent(ctx, event),
+                    .LoadOverlay => try self.load_view.handleEvent(ctx, event),
+                    else => {},
+                }
+            },
         }
     }
 

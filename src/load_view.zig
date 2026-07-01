@@ -3,6 +3,7 @@ const vaxis = @import("vaxis");
 const DropDown = @import("dropdown.zig").DropDown;
 const Allocator = std.mem.Allocator;
 const vxfw = vaxis.vxfw;
+const history_format = @import("history_format.zig");
 
 const TuiEvent = @import("tui.zig");
 const EventQueue = TuiEvent.EventQueue;
@@ -127,7 +128,8 @@ pub const LoadView = struct {
         var iter = std.mem.splitScalar(u8, data, '\n');
         while (iter.next()) |line| {
             if (line.len > 0) {
-                try self.history_list.*.append(self.allocator, try self.allocator.dupe(u8, line));
+                const unescaped = try history_format.unescapeFromFile(line, self.allocator);
+                try self.history_list.*.append(self.allocator, unescaped);
             }
         }
 

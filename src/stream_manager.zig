@@ -8,6 +8,11 @@ const NewLineIterator = @import("line_iter.zig").NewLineIterator;
 
 const Allocator = std.mem.Allocator;
 
+pub const SendMessage = union(enum) {
+    bytes: []const u8,
+    delay_ms: u64,
+};
+
 const StreamStatus = enum(u8) {
     Closed = 0,
     Open = 1,
@@ -16,7 +21,7 @@ const StreamStatus = enum(u8) {
 pub const StreamManager = struct {
     stream: ?Stream = null,
     stream_status: std.atomic.Value(u8) = std.atomic.Value(u8).init(@intFromEnum(StreamStatus.Closed)),
-    write_queue: vaxis.Queue([]const u8, 8),
+    write_queue: vaxis.Queue(SendMessage, 8),
     read_queue: vaxis.Queue(Record, 64),
     reader_thread: ?std.Thread = null,
     writer_thread: ?std.Thread = null,
@@ -30,7 +35,7 @@ pub const StreamManager = struct {
         return .{
             .io = io,
             .allocator = allocator,
-            .write_queue = vaxis.Queue([]const u8, 8).init(io),
+            .write_queue = vaxis.Queue(SendMessage, 8).init(io),
             .read_queue = vaxis.Queue(Record, 64).init(io),
         };
     }
@@ -39,8 +44,11 @@ pub const StreamManager = struct {
         self.stream_status.store(@intFromEnum(StreamStatus.Closed), .monotonic);
         if (self.stream) |s| s.close(self.io, self.allocator);
         self.stream = null;
-        while (self.write_queue.drain()) |ptr| {
-            self.allocator.free(ptr);
+        while (self.write_queue.drain()) |item| {
+            switch (item) {
+                .bytes => |data| self.allocator.free(data),
+                .delay_ms => {},
+            }
         } else {}
         while (self.read_queue.drain()) |r| {
             self.allocator.free(r.text);
@@ -85,16 +93,22 @@ pub const StreamManager = struct {
                 try self.io.sleep(.fromMilliseconds(1), .awake);
                 continue;
             };
-            errdefer self.allocator.free(msg);
-
-            const stream = self.stream orelse break;
-            _ = try stream.write(self.io, msg);
-            if (try self.read_queue.tryPush(.{
-                .rxOrTx = .TX,
-                .text = msg,
-                .time = std.Io.Timestamp.now(self.io, .awake).toMilliseconds(),
-            }) == false) {
-                self.allocator.free(msg);
+            switch (msg) {
+                .delay_ms => |ms| {
+                    try self.io.sleep(.fromMilliseconds(@as(i64, @intCast(ms))), .awake);
+                },
+                .bytes => |data| {
+                    errdefer self.allocator.free(data);
+                    const stream = self.stream orelse break;
+                    _ = try stream.write(self.io, data);
+                    if (try self.read_queue.tryPush(.{
+                        .rxOrTx = .TX,
+                        .text = data,
+                        .time = std.Io.Timestamp.now(self.io, .awake).toMilliseconds(),
+                    }) == false) {
+                        self.allocator.free(data);
+                    }
+                },
             }
         }
     }
