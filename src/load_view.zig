@@ -128,7 +128,8 @@ pub const LoadView = struct {
         var iter = std.mem.splitScalar(u8, data, '\n');
         while (iter.next()) |line| {
             if (line.len > 0) {
-                const unescaped = try history_format.unescapeFromFile(line, self.allocator);
+                const trimmed = std.mem.trimEnd(u8, line, "\r");
+                const unescaped = try history_format.unescapeFromFile(trimmed, self.allocator);
                 try self.history_list.*.append(self.allocator, unescaped);
             }
         }

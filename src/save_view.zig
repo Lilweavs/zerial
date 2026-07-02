@@ -201,7 +201,7 @@ pub const SaveView = struct {
             const escaped = try history_format.escapeForFile(line, self.allocator);
             defer self.allocator.free(escaped);
             _ = try file.writeStreamingAll(io, escaped);
-            _ = try file.writeStreamingAll(io, "\n");
+            _ = try file.writeStreamingAll(io, "\r\n");
         }
         try self.writeMetadata(io, name);
         if (self.current_file) |f| self.allocator.free(f);

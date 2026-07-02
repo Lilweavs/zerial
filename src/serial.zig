@@ -19,8 +19,18 @@ var port_name: ?[]u8 = null;
 pub fn openStream(io: std.Io, allocator: Allocator, opts: Options) !Stream {
     const serial = try allocator.create(Self);
     errdefer allocator.destroy(serial);
+
+    const port_path = if (builtin.os.tag == .windows and
+        opts.port.len > 0 and
+        !std.mem.startsWith(u8, opts.port, "\\\\.\\") and
+        !std.mem.startsWith(u8, opts.port, "/"))
+        try std.fmt.allocPrint(allocator, "\\\\.\\{s}", .{opts.port})
+    else
+        try allocator.dupe(u8, opts.port);
+    defer allocator.free(port_path);
+
     serial.* = .{
-        .port = std.Io.Dir.openFileAbsolute(io, opts.port, .{ .mode = .read_write }) catch |err| return err,
+        .port = std.Io.Dir.openFileAbsolute(io, port_path, .{ .mode = .read_write }) catch |err| return err,
         .io = io,
     };
 
