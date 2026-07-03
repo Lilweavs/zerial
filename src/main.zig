@@ -74,18 +74,6 @@ pub fn main(init: std.process.Init) !void {
     var app: vxfw.App = try .init(io, allocator, init.environ_map, &tty_buffer);
     defer app.deinit();
 
-    if (builtin.os.tag == .windows) {
-        const w32 = std.os.windows;
-        const stdin_handle = @extern(*const fn (w32.DWORD) callconv(.winapi) w32.HANDLE, .{ .name = "GetStdHandle" })(@bitCast(@as(i32, -10)));
-        var mode: w32.DWORD = 0;
-        const get_console_mode = @extern(*const fn (w32.HANDLE, *w32.DWORD) callconv(.winapi) w32.BOOL, .{ .name = "GetConsoleMode" });
-        const set_console_mode = @extern(*const fn (w32.HANDLE, w32.DWORD) callconv(.winapi) w32.BOOL, .{ .name = "SetConsoleMode" });
-        if (get_console_mode(stdin_handle, &mode) != .FALSE) {
-            mode |= 0x0200; // ENABLE_VIRTUAL_TERMINAL_INPUT
-            _ = set_console_mode(stdin_handle, mode);
-        }
-    }
-
     const appdata_dir = try resolveAppdataDir(allocator, init.environ_map);
     defer allocator.free(appdata_dir);
 
