@@ -66,8 +66,7 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const allocator = init.gpa;
 
-    const args = try init.minimal.args.toSlice(allocator);
-    defer allocator.free(args);
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
     const serial_opts = if (args.len > 1) parseArgs(args) else Serial.Options{};
 
     var tty_buffer: [1024 * 8]u8 = undefined;
