@@ -251,7 +251,7 @@ pub const Tui = struct {
                     }
                 }
 
-                return ctx.consumeAndRedraw();
+                ctx.redraw = true;
             },
             .key_press => |key| {
                 if (key.matches('c', .{ .ctrl = true })) {
