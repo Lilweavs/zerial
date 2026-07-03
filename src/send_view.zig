@@ -386,11 +386,64 @@ pub const SendView = struct {
 
         width += children.items[children.items.len - 1].surface.size.width;
 
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = 0, .col = width },
-            .surface = try self.input.widget().draw(ctx.withConstraints(.{ .width = 0, .height = input_height }, .{ .width = ctx.max.width.? - (width + 4), .height = input_height })),
-        });
-        width += children.getLast().surface.size.width;
+        const input_width = ctx.max.width.? - (width + 4);
+
+        // Render multiline text input surface manually, since TextField draws only on row 0
+        {
+            var input_surface = try vxfw.Surface.init(
+                ctx.arena,
+                self.input.widget(),
+                .{ .width = input_width, .height = input_height },
+            );
+
+            const style = self.input.style;
+            const base: vaxis.Cell = .{ .style = style };
+            @memset(input_surface.buffer, base);
+
+            const first_half = self.input.buf.firstHalf();
+            const second_half = self.input.buf.secondHalf();
+            const cursor_byte = first_half.len;
+
+            const full_text = try std.mem.concat(ctx.arena, u8, &[_][]const u8{ first_half, second_half });
+
+            var cursor_row: u16 = 0;
+            var cursor_col: u16 = 0;
+            var row: u16 = 0;
+            var byte_offset: usize = 0;
+            var lines_iter = std.mem.splitScalar(u8, full_text, '\n');
+            while (lines_iter.next()) |line| : (row += 1) {
+                if (row >= input_height) break;
+
+                var col: u16 = 0;
+                var iter = ctx.graphemeIterator(line);
+                while (iter.next()) |grapheme| {
+                    const g = grapheme.bytes(line);
+                    const w: u8 = @intCast(ctx.stringWidth(g));
+                    if (col + w > input_width) break;
+                    input_surface.writeCell(col, row, .{
+                        .char = .{ .grapheme = g, .width = w },
+                        .style = style,
+                    });
+                    col += w;
+                }
+
+                if (cursor_byte >= byte_offset and cursor_byte < byte_offset + line.len + 1) {
+                    cursor_row = row;
+                    const col_bytes = @min(cursor_byte - byte_offset, line.len);
+                    cursor_col = @intCast(ctx.stringWidth(line[0..col_bytes]));
+                }
+
+                byte_offset += line.len + 1;
+            }
+
+            input_surface.cursor = .{ .row = cursor_row, .col = cursor_col };
+
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = 0, .col = width },
+                .surface = input_surface,
+            });
+        }
+        width += input_width;
 
         try children.append(ctx.arena, .{
             .origin = .{ .row = 0, .col = width },
