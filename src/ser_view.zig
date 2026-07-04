@@ -176,7 +176,7 @@ pub const SerView = struct {
     pub fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
         const self: *SerView = @ptrCast(@alignCast(ptr));
 
-        var height: u16 = 0;
+        var height: u16 = 2; // fields start at row 2 (row 0 button, row 1 horizontal line)
         var width: u16 = 0;
 
         var children: std.ArrayList(vxfw.SubSurface) = .empty;
@@ -185,74 +185,71 @@ pub const SerView = struct {
 
         self.button.label = if (self.is_stream_open) "Close" else "Open";
 
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = 0, .col = 0 },
-            .surface = try self.button.widget().draw(ctx.withConstraints(.{}, .{ .width = 8, .height = 1 })),
-        });
-        height += children.getLast().surface.size.height;
+        // Port
+        {
+            const label = try (vxfw.Text{ .text = "PORT " }).widget().draw(ctx);
+            const dd = try (vxfw.Border{ .child = self.port_dropdown.widget() }).widget().draw(ctx);
+            try children.append(ctx.arena, .{ .origin = .{ .row = height + 1, .col = 0 }, .surface = label });
+            try children.append(ctx.arena, .{ .origin = .{ .row = height, .col = ddoffset }, .surface = dd });
+            width = @max(width, label.size.width, ddoffset + dd.size.width);
+            height += dd.size.height;
+        }
 
+        // Baud
+        {
+            const label = try (vxfw.Text{ .text = "BAUD " }).widget().draw(ctx);
+            const dd = try (vxfw.Border{ .child = self.baudrate_dropdown.widget() }).widget().draw(ctx);
+            try children.append(ctx.arena, .{ .origin = .{ .row = height + 1, .col = 0 }, .surface = label });
+            try children.append(ctx.arena, .{ .origin = .{ .row = height, .col = ddoffset }, .surface = dd });
+            width = @max(width, label.size.width, ddoffset + dd.size.width);
+            height += dd.size.height;
+        }
+
+        // Databits
+        {
+            const label = try (vxfw.Text{ .text = "DBIT " }).widget().draw(ctx);
+            const dd = try (vxfw.Border{ .child = self.databits_dropdown.widget() }).widget().draw(ctx);
+            try children.append(ctx.arena, .{ .origin = .{ .row = height + 1, .col = 0 }, .surface = label });
+            try children.append(ctx.arena, .{ .origin = .{ .row = height, .col = ddoffset }, .surface = dd });
+            width = @max(width, label.size.width, ddoffset + dd.size.width);
+            height += dd.size.height;
+        }
+
+        // Parity
+        {
+            const label = try (vxfw.Text{ .text = " PAR " }).widget().draw(ctx);
+            const dd = try (vxfw.Border{ .child = self.parity_dropdown.widget() }).widget().draw(ctx);
+            try children.append(ctx.arena, .{ .origin = .{ .row = height + 1, .col = 0 }, .surface = label });
+            try children.append(ctx.arena, .{ .origin = .{ .row = height, .col = ddoffset }, .surface = dd });
+            width = @max(width, label.size.width, ddoffset + dd.size.width);
+            height += dd.size.height;
+        }
+
+        // Stopbits
+        {
+            const label = try (vxfw.Text{ .text = "SBIT " }).widget().draw(ctx);
+            const dd = try (vxfw.Border{ .child = self.stopbits_dropdown.widget() }).widget().draw(ctx);
+            try children.append(ctx.arena, .{ .origin = .{ .row = height + 1, .col = 0 }, .surface = label });
+            try children.append(ctx.arena, .{ .origin = .{ .row = height, .col = ddoffset }, .surface = dd });
+            width = @max(width, label.size.width, ddoffset + dd.size.width);
+            height += dd.size.height;
+        }
+
+        // Button at row 0, centered
+        {
+            const surf = try self.button.widget().draw(ctx.withConstraints(.{}, .{ .width = 8, .height = 1 }));
+            const btn_x = (width -| surf.size.width) / 2;
+            try children.append(ctx.arena, .{ .origin = .{ .row = 0, .col = btn_x }, .surface = surf });
+            width = @max(width, surf.size.width);
+        }
+
+        // HorizontalLine at row 1, spanning full content width
         try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = 0 },
+            .origin = .{ .row = 1, .col = 0 },
             .surface = try (HorizontalLine{}).widget().draw(
-                ctx.withConstraints(.{}, .{ .width = 30, .height = 1 }),
+                ctx.withConstraints(.{}, .{ .width = width, .height = 1 }),
             ),
         });
-        height += 1;
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height + 1, .col = 0 },
-            .surface = try (vxfw.Text{ .text = "PORT " }).widget().draw(ctx),
-        });
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = ddoffset },
-            .surface = try (vxfw.Border{ .child = self.port_dropdown.widget() }).widget().draw(ctx),
-        });
-        height += children.getLast().surface.size.height;
-        width = @max(width, children.getLast().surface.size.width);
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height + 1, .col = 0 },
-            .surface = try (vxfw.Text{ .text = "BAUD " }).widget().draw(ctx),
-        });
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = ddoffset },
-            .surface = try (vxfw.Border{ .child = self.baudrate_dropdown.widget() }).widget().draw(ctx),
-        });
-        height += children.getLast().surface.size.height;
-        width = @max(width, children.getLast().surface.size.width);
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height + 1, .col = 0 },
-            .surface = try (vxfw.Text{ .text = "DBIT " }).widget().draw(ctx),
-        });
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = ddoffset },
-            .surface = try (vxfw.Border{ .child = self.databits_dropdown.widget() }).widget().draw(ctx),
-        });
-        height += children.getLast().surface.size.height;
-        width = @max(width, children.getLast().surface.size.width);
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height + 1, .col = 0 },
-            .surface = try (vxfw.Text{ .text = " PAR " }).widget().draw(ctx),
-        });
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = ddoffset },
-            .surface = try (vxfw.Border{ .child = self.parity_dropdown.widget() }).widget().draw(ctx),
-        });
-        height += children.getLast().surface.size.height;
-        width = @max(width, children.getLast().surface.size.width);
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height + 1, .col = 0 },
-            .surface = try (vxfw.Text{ .text = "SBIT " }).widget().draw(ctx),
-        });
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = ddoffset },
-            .surface = try (vxfw.Border{ .child = self.stopbits_dropdown.widget() }).widget().draw(ctx),
-        });
-        height += children.getLast().surface.size.height;
-        width = @max(width, children.getLast().surface.size.width);
 
         return .{
             .size = .{ .width = width, .height = height },
