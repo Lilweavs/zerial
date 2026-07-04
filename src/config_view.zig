@@ -20,6 +20,10 @@ pub const ConfigView = struct {
     stopbits_dropdown: DropDown = .{},
     is_stream_open: bool = false,
 
+    mode_index: usize = 0, // 0=Serial, 1=TCP, 2=UDP
+    ip_input: vxfw.TextField = undefined,
+    is_ip_valid: bool = false,
+
     button: vxfw.Button = .{
         .label = "Open",
         .onClick = connectOrDisconnect,
@@ -55,6 +59,7 @@ pub const ConfigView = struct {
         self.databits_dropdown.deinit(allocator);
         self.parity_dropdown.deinit(allocator);
         self.stopbits_dropdown.deinit(allocator);
+        self.ip_input.deinit();
     }
 
     pub fn getSerialConfigOptions(self: *ConfigView) Serial.Options {
@@ -67,20 +72,16 @@ pub const ConfigView = struct {
         };
     }
 
-    fn validateIpInput(ptr: ?*anyopaque, event: *vxfw.EventContext, buffer: []const u8) anyerror!void {
-        _ = event;
+    fn onIpChange(ptr: ?*anyopaque, ctx: *vxfw.EventContext, text: []const u8) anyerror!void {
+        _ = ctx;
         const self: *ConfigView = @ptrCast(@alignCast(ptr));
-
-        _ = std.net.Address.parseIpAndPort(buffer) catch {
-            self.is_ip_valid = false;
-            return;
-        };
-        self.is_ip_valid = true;
+        self.is_ip_valid = if (std.Io.net.IpAddress.parseLiteral(text)) |_| true else |_| false;
     }
 
     fn connectOrDisconnect(ptr: ?*anyopaque, event: *vxfw.EventContext) anyerror!void {
         _ = event;
         const self: *ConfigView = @ptrCast(@alignCast(ptr.?));
+        if (self.mode_index > 0 and !self.is_ip_valid) return;
         try self.event_queue.push(.StreamOpenClose);
     }
 
@@ -134,23 +135,51 @@ pub const ConfigView = struct {
                 }
                 self.stopbits_dropdown.list = try list.toOwnedSlice(self.allocator);
 
+                self.ip_input.userdata = self;
+                self.ip_input.onChange = onIpChange;
+
                 self.button.userdata = self;
                 return self.button.handleEvent(ctx, .focus_in);
             },
             .key_press => |key| {
-                switch (self.index) {
-                    0 => {
-                        if (key.matches(vaxis.Key.enter, .{})) {
-                            return self.button.handleEvent(ctx, event);
-                        }
-                        self.moveFocus(ctx, key);
-                    },
-                    1 => try self.handleDropdown(ctx, key, &self.port_dropdown),
-                    2 => try self.handleDropdown(ctx, key, &self.baudrate_dropdown),
-                    3 => try self.handleDropdown(ctx, key, &self.databits_dropdown),
-                    4 => try self.handleDropdown(ctx, key, &self.parity_dropdown),
-                    5 => try self.handleDropdown(ctx, key, &self.stopbits_dropdown),
-                    else => {},
+                if (key.matches(vaxis.Key.tab, .{})) {
+                    self.mode_index = (self.mode_index + 1) % 3;
+                    self.ip_input.clearAndFree();
+                    self.is_ip_valid = false;
+                    self.index = 0;
+                    self.button.focused = true;
+                    return ctx.consumeAndRedraw();
+                }
+
+                if (self.mode_index == 0) {
+                    switch (self.index) {
+                        0 => {
+                            if (key.matches(vaxis.Key.enter, .{})) {
+                                return self.button.handleEvent(ctx, event);
+                            }
+                            self.moveFocus(ctx, key);
+                        },
+                        1 => try self.handleDropdown(ctx, key, &self.port_dropdown),
+                        2 => try self.handleDropdown(ctx, key, &self.baudrate_dropdown),
+                        3 => try self.handleDropdown(ctx, key, &self.databits_dropdown),
+                        4 => try self.handleDropdown(ctx, key, &self.parity_dropdown),
+                        5 => try self.handleDropdown(ctx, key, &self.stopbits_dropdown),
+                        else => {},
+                    }
+                } else {
+                    switch (self.index) {
+                        0 => {
+                            if (key.matches(vaxis.Key.enter, .{})) {
+                                return self.button.handleEvent(ctx, event);
+                            }
+                            self.moveFocus(ctx, key);
+                        },
+                        1 => {
+                            try self.ip_input.handleEvent(ctx, event);
+                            return ctx.consumeAndRedraw();
+                        },
+                        else => {},
+                    }
                 }
             },
             else => {},
@@ -161,8 +190,9 @@ pub const ConfigView = struct {
 
     fn moveFocus(self: *ConfigView, ctx: *vxfw.EventContext, key: vaxis.Key) void {
         _ = ctx;
+        const max_index: usize = if (self.mode_index == 0) 5 else 1;
         if (key.matches('j', .{})) {
-            self.index = @min(self.index + 1, 5);
+            self.index = @min(self.index + 1, max_index);
         }
         if (key.matches('k', .{})) {
             self.index -|= 1;
@@ -179,21 +209,28 @@ pub const ConfigView = struct {
         self.databits_dropdown.is_focused = false;
         self.parity_dropdown.is_focused = false;
         self.stopbits_dropdown.is_focused = false;
-        switch (self.index) {
-            0 => self.button.focused = true,
-            1 => self.port_dropdown.is_focused = true,
-            2 => self.baudrate_dropdown.is_focused = true,
-            3 => self.databits_dropdown.is_focused = true,
-            4 => self.parity_dropdown.is_focused = true,
-            5 => self.stopbits_dropdown.is_focused = true,
-            else => {},
+        if (self.mode_index == 0) {
+            switch (self.index) {
+                0 => self.button.focused = true,
+                1 => self.port_dropdown.is_focused = true,
+                2 => self.baudrate_dropdown.is_focused = true,
+                3 => self.databits_dropdown.is_focused = true,
+                4 => self.parity_dropdown.is_focused = true,
+                5 => self.stopbits_dropdown.is_focused = true,
+                else => {},
+            }
+        } else {
+            switch (self.index) {
+                0 => self.button.focused = true,
+                else => {},
+            }
         }
     }
 
     pub fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
         const self: *ConfigView = @ptrCast(@alignCast(ptr));
 
-        var height: u16 = 2;
+        var height: u16 = 0;
         var width: u16 = 0;
 
         const ddoffset = 5;
@@ -202,108 +239,148 @@ pub const ConfigView = struct {
 
         self.setSelected();
 
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height + 1, .col = 0 },
-            .surface = try (vxfw.Text{
-                .text = "PORT ",
-            }).widget().draw(ctx),
-        });
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = ddoffset },
-            .surface = try (vxfw.Border{
-                .child = self.port_dropdown.widget(),
-            }).widget().draw(ctx),
-        });
-
-        height += children.getLast().surface.size.height;
-        width = @max(width, children.getLast().surface.size.width);
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height + 1, .col = 0 },
-            .surface = try (vxfw.Text{
-                .text = "BAUD ",
-            }).widget().draw(ctx),
-        });
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = ddoffset },
-            .surface = try (vxfw.Border{
-                .child = self.baudrate_dropdown.widget(),
-            }).widget().draw(ctx),
-        });
-
-        height += children.getLast().surface.size.height;
-        width = @max(width, children.getLast().surface.size.width);
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height + 1, .col = 0 },
-            .surface = try (vxfw.Text{
-                .text = "DBIT ",
-            }).widget().draw(ctx),
-        });
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = ddoffset },
-            .surface = try (vxfw.Border{
-                .child = self.databits_dropdown.widget(),
-            }).widget().draw(ctx),
-        });
-
-        height += children.getLast().surface.size.height;
-        width = @max(width, children.getLast().surface.size.width);
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height + 1, .col = 0 },
-            .surface = try (vxfw.Text{
-                .text = " PAR ",
-            }).widget().draw(ctx),
-        });
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = ddoffset },
-            .surface = try (vxfw.Border{
-                .child = self.parity_dropdown.widget(),
-            }).widget().draw(ctx),
-        });
-
-        height += children.getLast().surface.size.height;
-        width = @max(width, children.getLast().surface.size.width);
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height + 1, .col = 0 },
-            .surface = try (vxfw.Text{
-                .text = "SBIT ",
-            }).widget().draw(ctx),
-        });
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = ddoffset },
-            .surface = try (vxfw.Border{
-                .child = self.stopbits_dropdown.widget(),
-            }).widget().draw(ctx),
-        });
-
-        height += children.getLast().surface.size.height;
-        width = @max(width, children.getLast().surface.size.width);
-
         self.button.label = if (self.is_stream_open) "Close" else "Open";
 
+        // Button
         try children.append(ctx.arena, .{
-            .origin = .{ .row = 0, .col = width / 2 - 2 },
+            .origin = .{ .row = 0, .col = 0 },
             .surface = try self.button.widget().draw(ctx.withConstraints(.{}, .{ .width = 8, .height = 1 })),
         });
         height += children.getLast().surface.size.height;
 
+        // Horizontal line separator
         try children.append(ctx.arena, .{
-            .origin = .{ .row = 1, .col = 0 },
+            .origin = .{ .row = height, .col = 0 },
             .surface = try (HorizontalLine{}).widget().draw(
-                ctx.withConstraints(.{}, .{ .width = width + ddoffset, .height = 1 }),
+                ctx.withConstraints(.{}, .{ .width = 30, .height = 1 }),
             ),
         });
+        height += 1;
+
+        // Mode indicator
+        const mode_label = switch (self.mode_index) {
+            0 => "Tab: Serial",
+            1 => "Tab: TCP",
+            2 => "Tab: UDP",
+            else => unreachable,
+        };
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = height, .col = 0 },
+            .surface = try (vxfw.Text{ .text = mode_label }).widget().draw(ctx),
+        });
+        height += 1;
+        width = @max(width, children.getLast().surface.size.width);
+
+        if (self.mode_index == 0) {
+            // Serial mode fields
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = height + 1, .col = 0 },
+                .surface = try (vxfw.Text{
+                    .text = "PORT ",
+                }).widget().draw(ctx),
+            });
+
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = height, .col = ddoffset },
+                .surface = try (vxfw.Border{
+                    .child = self.port_dropdown.widget(),
+                }).widget().draw(ctx),
+            });
+
+            height += children.getLast().surface.size.height;
+            width = @max(width, children.getLast().surface.size.width);
+
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = height + 1, .col = 0 },
+                .surface = try (vxfw.Text{
+                    .text = "BAUD ",
+                }).widget().draw(ctx),
+            });
+
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = height, .col = ddoffset },
+                .surface = try (vxfw.Border{
+                    .child = self.baudrate_dropdown.widget(),
+                }).widget().draw(ctx),
+            });
+
+            height += children.getLast().surface.size.height;
+            width = @max(width, children.getLast().surface.size.width);
+
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = height + 1, .col = 0 },
+                .surface = try (vxfw.Text{
+                    .text = "DBIT ",
+                }).widget().draw(ctx),
+            });
+
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = height, .col = ddoffset },
+                .surface = try (vxfw.Border{
+                    .child = self.databits_dropdown.widget(),
+                }).widget().draw(ctx),
+            });
+
+            height += children.getLast().surface.size.height;
+            width = @max(width, children.getLast().surface.size.width);
+
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = height + 1, .col = 0 },
+                .surface = try (vxfw.Text{
+                    .text = " PAR ",
+                }).widget().draw(ctx),
+            });
+
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = height, .col = ddoffset },
+                .surface = try (vxfw.Border{
+                    .child = self.parity_dropdown.widget(),
+                }).widget().draw(ctx),
+            });
+
+            height += children.getLast().surface.size.height;
+            width = @max(width, children.getLast().surface.size.width);
+
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = height + 1, .col = 0 },
+                .surface = try (vxfw.Text{
+                    .text = "SBIT ",
+                }).widget().draw(ctx),
+            });
+
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = height, .col = ddoffset },
+                .surface = try (vxfw.Border{
+                    .child = self.stopbits_dropdown.widget(),
+                }).widget().draw(ctx),
+            });
+
+            height += children.getLast().surface.size.height;
+            width = @max(width, children.getLast().surface.size.width);
+        } else {
+            // TCP/UDP mode: IP:Port input
+            const label = "ADDR ";
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = height + 1, .col = 0 },
+                .surface = try (vxfw.Text{ .text = label }).widget().draw(ctx),
+            });
+
+            const input_width: u16 = 20;
+            try children.append(ctx.arena, .{
+                .origin = .{ .row = height, .col = ddoffset },
+                .surface = try self.ip_input.widget().draw(ctx.withConstraints(
+                    .{ .width = 0, .height = 1 },
+                    .{ .width = input_width, .height = 1 },
+                )),
+            });
+
+            const field_width = ddoffset + input_width;
+            width = @max(width, field_width);
+            height += 1;
+        }
 
         return .{
-            .size = .{ .width = width + ddoffset, .height = height },
+            .size = .{ .width = width, .height = height },
             .widget = self.widget(),
             .buffer = &.{},
             .children = children.items,

@@ -5,6 +5,8 @@ const Serial = @import("serial.zig");
 const Record = @import("record.zig").Record;
 const RecordStore = @import("record_store.zig").RecordStore;
 const StreamManager = @import("stream_manager.zig").StreamManager;
+const NetStream = @import("net_stream.zig");
+const BorderWithTab = @import("BorderWithTab.zig").BorderWithTab;
 
 const Allocator = std.mem.Allocator;
 
@@ -16,6 +18,7 @@ const ZerialState = enum {
     Configuration,
     SaveOverlay,
     LoadOverlay,
+    SerTcpUdpOverlay,
 };
 
 const ConfigView = @import("config_view.zig").ConfigView;
@@ -122,6 +125,10 @@ pub const Tui = struct {
     record_store: RecordStore,
     stream_manager: StreamManager,
 
+    ser_tcp_udp: BorderWithTab,
+    ser_tcp_udp_tabs: [3]BorderWithTab.Tab,
+    ser_tcp_udp_texts: [3]vxfw.Text,
+
     state: ZerialState = .Home,
 
     pub fn widget(self: *Tui) vxfw.Widget {
@@ -141,6 +148,9 @@ pub const Tui = struct {
             .config_view = .{
                 .event_queue = undefined,
                 .allocator = allocator,
+                .ip_input = .{
+                    .buf = .init(allocator),
+                },
             },
             .send_view = .{
                 .event_queue = undefined,
@@ -154,6 +164,13 @@ pub const Tui = struct {
             .record_store = try RecordStore.init(allocator),
             .stream_manager = StreamManager.init(io, allocator),
             .appdata_dir = try allocator.dupe(u8, appdata_dir),
+            .ser_tcp_udp_texts = .{
+                .{ .text = "Text Here" },
+                .{ .text = "Text Here" },
+                .{ .text = "Text Here" },
+            },
+            .ser_tcp_udp_tabs = undefined,
+            .ser_tcp_udp = undefined,
         };
         errdefer allocator.free(self.appdata_dir);
         std.Io.Dir.createDirAbsolute(self.io, self.appdata_dir, .default_dir) catch |e| switch (e) {
@@ -182,6 +199,15 @@ pub const Tui = struct {
             .current_file_ptr = &self.save_view.current_file,
         };
         try self.load_view.loadLastHistory(io);
+
+        self.ser_tcp_udp_tabs = .{
+            .{ .label = "Ser", .child = self.ser_tcp_udp_texts[0].widget() },
+            .{ .label = "TCP", .child = self.ser_tcp_udp_texts[1].widget() },
+            .{ .label = "UDP", .child = self.ser_tcp_udp_texts[2].widget() },
+        };
+        self.ser_tcp_udp = .{
+            .tabs = &self.ser_tcp_udp_tabs,
+        };
 
         if (serial_opts.port.len > 0) {
             self.stream_manager.open(serial_opts) catch |e| {
@@ -230,12 +256,29 @@ pub const Tui = struct {
                         .PageDown => self.record_store.pageDown(),
                         .StreamOpenClose => {
                             if (!self.stream_manager.isOpen()) {
-                                const cfg = self.config_view.getSerialConfigOptions();
-
-                                self.stream_manager.open(cfg) catch |e| {
-                                    self.stream_manager.last_error = e;
-                                    return ctx.consumeAndRedraw();
-                                };
+                                switch (self.config_view.mode_index) {
+                                    0 => {
+                                        const cfg = self.config_view.getSerialConfigOptions();
+                                        self.stream_manager.open(cfg) catch |e| {
+                                            self.stream_manager.last_error = e;
+                                            return ctx.consumeAndRedraw();
+                                        };
+                                    },
+                                    1, 2 => {
+                                        const text = try self.config_view.ip_input.buf.dupe();
+                                        defer self.allocator.free(text);
+                                        const parsed = NetStream.parseHostPort(text) catch |e| {
+                                            self.stream_manager.last_error = e;
+                                            return ctx.consumeAndRedraw();
+                                        };
+                                        const mode: NetStream.NetMode = if (self.config_view.mode_index == 1) .TCP else .UDP;
+                                        self.stream_manager.openNet(parsed.host, parsed.port, mode) catch |e| {
+                                            self.stream_manager.last_error = e;
+                                            return ctx.consumeAndRedraw();
+                                        };
+                                    },
+                                    else => unreachable,
+                                }
                                 self.config_view.is_stream_open = true;
                                 self.state = .Home;
                                 try ctx.requestFocus(self.widget());
@@ -265,6 +308,15 @@ pub const Tui = struct {
                     },
                     .SendView => {
                         try self.send_view.handleEvent(ctx, event);
+                        return ctx.consumeAndRedraw();
+                    },
+                    .SerTcpUdpOverlay => {
+                        if (key.matches(vaxis.Key.escape, .{})) {
+                            self.state = .Home;
+                            try ctx.requestFocus(self.widget());
+                            return ctx.consumeAndRedraw();
+                        }
+                        try self.ser_tcp_udp.handleEvent(ctx, event);
                         return ctx.consumeAndRedraw();
                     },
                     .SaveOverlay => {
@@ -301,6 +353,11 @@ pub const Tui = struct {
                             try ctx.requestFocus(self.load_view.widget());
                             return ctx.consumeAndRedraw();
                         }
+                        if (key.matches('b', .{ .ctrl = true })) {
+                            self.state = .SerTcpUdpOverlay;
+                            try ctx.requestFocus(self.widget());
+                            return ctx.consumeAndRedraw();
+                        }
                         if (key.matches(':', .{})) {
                             self.state = .SendView;
                             try ctx.requestFocus(self.send_view.input.widget());
@@ -319,6 +376,7 @@ pub const Tui = struct {
                 switch (self.state) {
                     .SendView => try self.send_view.handleEvent(ctx, event),
                     .Configuration => try self.config_view.handleEvent(ctx, event),
+                    .SerTcpUdpOverlay => try self.ser_tcp_udp.handleEvent(ctx, event),
                     .SaveOverlay => try self.save_view.handleEvent(ctx, event),
                     .LoadOverlay => try self.load_view.handleEvent(ctx, event),
                     else => {},
@@ -403,6 +461,11 @@ pub const Tui = struct {
                     },
                 },
             }).widget().draw(ctx.withConstraints(.{ .width = 15 }, ctx.max));
+            const origin_row = (ctx.max.height.? -| overlay.size.height) / 2;
+            const origin_col = (ctx.max.width.? -| overlay.size.width) / 2;
+            try children.append(ctx.arena, .{ .origin = .{ .row = origin_row, .col = origin_col }, .surface = overlay });
+        } else if (self.state == .SerTcpUdpOverlay) {
+            const overlay = try self.ser_tcp_udp.widget().draw(ctx.withConstraints(.{ .width = 15, .height = 3 }, .{ .width = ctx.max.width.? / 2 }));
             const origin_row = (ctx.max.height.? -| overlay.size.height) / 2;
             const origin_col = (ctx.max.width.? -| overlay.size.width) / 2;
             try children.append(ctx.arena, .{ .origin = .{ .row = origin_row, .col = origin_col }, .surface = overlay });

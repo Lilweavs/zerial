@@ -5,6 +5,7 @@ const Serial = @import("serial.zig");
 const Stream = @import("stream.zig").Stream;
 const Record = @import("record.zig").Record;
 const NewLineIterator = @import("line_iter.zig").NewLineIterator;
+const NetStream = @import("net_stream.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -62,6 +63,15 @@ pub const StreamManager = struct {
     pub fn open(self: *StreamManager, cfg: Serial.Options) !void {
         self.last_error = null;
         self.stream = try Serial.openStream(self.io, self.allocator, cfg);
+        self.stream_status.store(@intFromEnum(StreamStatus.Open), .monotonic);
+        self.up_time = std.Io.Timestamp.now(self.io, .awake);
+        self.reader_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, StreamManager.streamReaderThread, .{self});
+        self.writer_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, StreamManager.streamWriterThread, .{self});
+    }
+
+    pub fn openNet(self: *StreamManager, host: []const u8, port: u16, mode: NetStream.NetMode) !void {
+        self.last_error = null;
+        self.stream = try NetStream.openStream(self.io, self.allocator, host, port, mode);
         self.stream_status.store(@intFromEnum(StreamStatus.Open), .monotonic);
         self.up_time = std.Io.Timestamp.now(self.io, .awake);
         self.reader_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, StreamManager.streamReaderThread, .{self});
