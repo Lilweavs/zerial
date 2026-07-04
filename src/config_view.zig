@@ -1,9 +1,10 @@
 const std = @import("std");
 const vaxis = @import("vaxis");
-const Serial = @import("serial.zig");
-const ser_utils = @import("serial");
-const DropDown = @import("dropdown.zig").DropDown;
-const HorizontalLine = @import("HorizontalLine.zig").HorizontalLine;
+
+const SerView = @import("ser_view.zig").SerView;
+const TcpView = @import("tcp_view.zig").TcpView;
+const UdpView = @import("udp_view.zig").UdpView;
+const BorderWithTab = @import("BorderWithTab.zig").BorderWithTab;
 
 const vxfw = vaxis.vxfw;
 
@@ -13,378 +14,41 @@ const EventQueue = TuiEvent.EventQueue;
 const Allocator = std.mem.Allocator;
 
 pub const ConfigView = struct {
-    port_dropdown: DropDown = .{},
-    baudrate_dropdown: DropDown = .{},
-    databits_dropdown: DropDown = .{},
-    parity_dropdown: DropDown = .{},
-    stopbits_dropdown: DropDown = .{},
-    is_stream_open: bool = false,
+    ser_view: SerView,
+    tcp_view: TcpView,
+    udp_view: UdpView,
 
-    mode_index: usize = 0, // 0=Serial, 1=TCP, 2=UDP
-    ip_input: vxfw.TextField = undefined,
-    is_ip_valid: bool = false,
-
-    button: vxfw.Button = .{
-        .label = "Open",
-        .onClick = connectOrDisconnect,
-    },
-
-    index: usize = 0,
+    ser_tcp_udp: BorderWithTab,
+    ser_tcp_udp_tabs: [3]BorderWithTab.Tab,
 
     event_queue: *EventQueue,
     allocator: Allocator,
 
-    pub const size = vxfw.Size{ .width = 22, .height = 10 };
-
-    pub fn enumerateSerialPorts(_: *ConfigView, io: std.Io, allocator: Allocator) ![][]const u8 {
-        var com_port_iter = try ser_utils.list(io);
-        var list: std.ArrayList([]const u8) = .empty;
-        while (try com_port_iter.next()) |com_port| {
-            try list.append(allocator, try allocator.dupe(u8, com_port.display_name));
-        }
-        return list.toOwnedSlice(allocator);
-    }
-
-    pub fn deinitPortDropdown(self: *ConfigView, allocator: Allocator) void {
-        if (self.port_dropdown.list.len > 0) {
-            for (self.port_dropdown.list) |ptr| allocator.free(ptr);
-            allocator.free(self.port_dropdown.list);
-        }
-        self.port_dropdown.list = &.{};
-    }
-
-    pub fn deinit(self: *ConfigView, allocator: Allocator) void {
-        self.port_dropdown.deinit(allocator);
-        self.baudrate_dropdown.deinit(allocator);
-        self.databits_dropdown.deinit(allocator);
-        self.parity_dropdown.deinit(allocator);
-        self.stopbits_dropdown.deinit(allocator);
-        self.ip_input.deinit();
-    }
-
-    pub fn getSerialConfigOptions(self: *ConfigView) Serial.Options {
-        return .{
-            .port = self.port_dropdown.list[self.port_dropdown.index],
-            .baudrate = std.meta.stringToEnum(Serial.Baudrates, self.baudrate_dropdown.list[self.baudrate_dropdown.index]).?,
-            .parity = std.meta.stringToEnum(ser_utils.Parity, self.parity_dropdown.list[self.parity_dropdown.index]).?,
-            .stopbits = std.meta.stringToEnum(ser_utils.StopBits, self.stopbits_dropdown.list[self.stopbits_dropdown.index]).?,
-            .wordsize = std.meta.stringToEnum(ser_utils.WordSize, self.databits_dropdown.list[self.databits_dropdown.index]).?,
-        };
-    }
-
-    fn onIpChange(ptr: ?*anyopaque, ctx: *vxfw.EventContext, text: []const u8) anyerror!void {
-        _ = ctx;
-        const self: *ConfigView = @ptrCast(@alignCast(ptr));
-        self.is_ip_valid = if (std.Io.net.IpAddress.parseLiteral(text)) |_| true else |_| false;
-    }
-
-    fn connectOrDisconnect(ptr: ?*anyopaque, event: *vxfw.EventContext) anyerror!void {
-        _ = event;
-        const self: *ConfigView = @ptrCast(@alignCast(ptr.?));
-        if (self.mode_index > 0 and !self.is_ip_valid) return;
-        try self.event_queue.push(.StreamOpenClose);
-    }
-
     pub fn widget(self: *ConfigView) vxfw.Widget {
-        return .{
-            .userdata = self,
-            .eventHandler = ConfigView.typeErasedEventHandler,
-            .drawFn = ConfigView.typeErasedDrawFn,
-        };
-    }
-
-    fn typeErasedEventHandler(ptr: *anyopaque, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
-        const self: *ConfigView = @ptrCast(@alignCast(ptr));
-        return self.handleEvent(ctx, event);
-    }
-
-    fn handleDropdown(self: *ConfigView, ctx: *vxfw.EventContext, key: vaxis.Key, dd: *DropDown) !void {
-        if (dd.is_expanded) {
-            try dd.handleEvent(ctx, .{ .key_press = key });
-        } else {
-            if (key.matches(vaxis.Key.enter, .{})) {
-                dd.is_expanded = true;
-            }
-            self.moveFocus(ctx, key);
-        }
+        return self.ser_tcp_udp.widget();
     }
 
     pub fn handleEvent(self: *ConfigView, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
         switch (event) {
             .init => {
-                var list: std.ArrayList([]const u8) = .empty;
-
-                inline for (std.meta.fields(Serial.Baudrates)) |field| {
-                    try list.append(self.allocator, try self.allocator.dupe(u8, field.name));
-                }
-                self.baudrate_dropdown.list = try list.toOwnedSlice(self.allocator);
-
-                inline for (std.meta.fields(ser_utils.WordSize)) |field| {
-                    try list.append(self.allocator, try self.allocator.dupe(u8, field.name));
-                }
-                self.databits_dropdown.list = try list.toOwnedSlice(self.allocator);
-                self.databits_dropdown.index = 3;
-
-                inline for (std.meta.fields(ser_utils.Parity)) |field| {
-                    try list.append(self.allocator, try self.allocator.dupe(u8, field.name));
-                }
-                self.parity_dropdown.list = try list.toOwnedSlice(self.allocator);
-
-                inline for (std.meta.fields(ser_utils.StopBits)) |field| {
-                    try list.append(self.allocator, try self.allocator.dupe(u8, field.name));
-                }
-                self.stopbits_dropdown.list = try list.toOwnedSlice(self.allocator);
-
-                self.ip_input.userdata = self;
-                self.ip_input.onChange = onIpChange;
-
-                self.button.userdata = self;
-                return self.button.handleEvent(ctx, .focus_in);
+                try self.ser_view.handleEvent(ctx, event);
+                try self.tcp_view.handleEvent(ctx, event);
+                try self.udp_view.handleEvent(ctx, event);
             },
-            .key_press => |key| {
-                if (key.matches(vaxis.Key.tab, .{})) {
-                    self.mode_index = (self.mode_index + 1) % 3;
-                    self.ip_input.clearAndFree();
-                    self.is_ip_valid = false;
-                    self.index = 0;
-                    self.button.focused = true;
-                    return ctx.consumeAndRedraw();
-                }
-
-                if (self.mode_index == 0) {
-                    switch (self.index) {
-                        0 => {
-                            if (key.matches(vaxis.Key.enter, .{})) {
-                                return self.button.handleEvent(ctx, event);
-                            }
-                            self.moveFocus(ctx, key);
-                        },
-                        1 => try self.handleDropdown(ctx, key, &self.port_dropdown),
-                        2 => try self.handleDropdown(ctx, key, &self.baudrate_dropdown),
-                        3 => try self.handleDropdown(ctx, key, &self.databits_dropdown),
-                        4 => try self.handleDropdown(ctx, key, &self.parity_dropdown),
-                        5 => try self.handleDropdown(ctx, key, &self.stopbits_dropdown),
-                        else => {},
-                    }
-                } else {
-                    switch (self.index) {
-                        0 => {
-                            if (key.matches(vaxis.Key.enter, .{})) {
-                                return self.button.handleEvent(ctx, event);
-                            }
-                            self.moveFocus(ctx, key);
-                        },
-                        1 => {
-                            try self.ip_input.handleEvent(ctx, event);
-                            return ctx.consumeAndRedraw();
-                        },
-                        else => {},
-                    }
-                }
+            else => {
+                try self.ser_tcp_udp.handleEvent(ctx, event);
             },
-            else => {},
-        }
-
-        return;
-    }
-
-    fn moveFocus(self: *ConfigView, ctx: *vxfw.EventContext, key: vaxis.Key) void {
-        _ = ctx;
-        const max_index: usize = if (self.mode_index == 0) 5 else 1;
-        if (key.matches('j', .{})) {
-            self.index = @min(self.index + 1, max_index);
-        }
-        if (key.matches('k', .{})) {
-            self.index -|= 1;
-        }
-        if (key.matches(vaxis.Key.escape, .{})) {
-            _ = self.event_queue.tryPush(.Home) catch @panic("not handled");
         }
     }
 
-    fn setSelected(self: *ConfigView) void {
-        self.button.focused = false;
-        self.port_dropdown.is_focused = false;
-        self.baudrate_dropdown.is_focused = false;
-        self.databits_dropdown.is_focused = false;
-        self.parity_dropdown.is_focused = false;
-        self.stopbits_dropdown.is_focused = false;
-        if (self.mode_index == 0) {
-            switch (self.index) {
-                0 => self.button.focused = true,
-                1 => self.port_dropdown.is_focused = true,
-                2 => self.baudrate_dropdown.is_focused = true,
-                3 => self.databits_dropdown.is_focused = true,
-                4 => self.parity_dropdown.is_focused = true,
-                5 => self.stopbits_dropdown.is_focused = true,
-                else => {},
-            }
-        } else {
-            switch (self.index) {
-                0 => self.button.focused = true,
-                else => {},
-            }
-        }
+    pub fn enumerateSerialPorts(self: *ConfigView, io: std.Io, allocator: Allocator) !void {
+        self.ser_view.deinitPortDropdown(allocator);
+        self.ser_view.port_dropdown.list = try self.ser_view.enumerateSerialPorts(io, allocator);
     }
 
-    pub fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
-        const self: *ConfigView = @ptrCast(@alignCast(ptr));
-
-        var height: u16 = 0;
-        var width: u16 = 0;
-
-        const ddoffset = 5;
-
-        var children: std.ArrayList(vxfw.SubSurface) = .empty;
-
-        self.setSelected();
-
-        self.button.label = if (self.is_stream_open) "Close" else "Open";
-
-        // Button
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = 0, .col = 0 },
-            .surface = try self.button.widget().draw(ctx.withConstraints(.{}, .{ .width = 8, .height = 1 })),
-        });
-        height += children.getLast().surface.size.height;
-
-        // Horizontal line separator
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = 0 },
-            .surface = try (HorizontalLine{}).widget().draw(
-                ctx.withConstraints(.{}, .{ .width = 30, .height = 1 }),
-            ),
-        });
-        height += 1;
-
-        // Mode indicator
-        const mode_label = switch (self.mode_index) {
-            0 => "Tab: Serial",
-            1 => "Tab: TCP",
-            2 => "Tab: UDP",
-            else => unreachable,
-        };
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = 0 },
-            .surface = try (vxfw.Text{ .text = mode_label }).widget().draw(ctx),
-        });
-        height += 1;
-        width = @max(width, children.getLast().surface.size.width);
-
-        if (self.mode_index == 0) {
-            // Serial mode fields
-            try children.append(ctx.arena, .{
-                .origin = .{ .row = height + 1, .col = 0 },
-                .surface = try (vxfw.Text{
-                    .text = "PORT ",
-                }).widget().draw(ctx),
-            });
-
-            try children.append(ctx.arena, .{
-                .origin = .{ .row = height, .col = ddoffset },
-                .surface = try (vxfw.Border{
-                    .child = self.port_dropdown.widget(),
-                }).widget().draw(ctx),
-            });
-
-            height += children.getLast().surface.size.height;
-            width = @max(width, children.getLast().surface.size.width);
-
-            try children.append(ctx.arena, .{
-                .origin = .{ .row = height + 1, .col = 0 },
-                .surface = try (vxfw.Text{
-                    .text = "BAUD ",
-                }).widget().draw(ctx),
-            });
-
-            try children.append(ctx.arena, .{
-                .origin = .{ .row = height, .col = ddoffset },
-                .surface = try (vxfw.Border{
-                    .child = self.baudrate_dropdown.widget(),
-                }).widget().draw(ctx),
-            });
-
-            height += children.getLast().surface.size.height;
-            width = @max(width, children.getLast().surface.size.width);
-
-            try children.append(ctx.arena, .{
-                .origin = .{ .row = height + 1, .col = 0 },
-                .surface = try (vxfw.Text{
-                    .text = "DBIT ",
-                }).widget().draw(ctx),
-            });
-
-            try children.append(ctx.arena, .{
-                .origin = .{ .row = height, .col = ddoffset },
-                .surface = try (vxfw.Border{
-                    .child = self.databits_dropdown.widget(),
-                }).widget().draw(ctx),
-            });
-
-            height += children.getLast().surface.size.height;
-            width = @max(width, children.getLast().surface.size.width);
-
-            try children.append(ctx.arena, .{
-                .origin = .{ .row = height + 1, .col = 0 },
-                .surface = try (vxfw.Text{
-                    .text = " PAR ",
-                }).widget().draw(ctx),
-            });
-
-            try children.append(ctx.arena, .{
-                .origin = .{ .row = height, .col = ddoffset },
-                .surface = try (vxfw.Border{
-                    .child = self.parity_dropdown.widget(),
-                }).widget().draw(ctx),
-            });
-
-            height += children.getLast().surface.size.height;
-            width = @max(width, children.getLast().surface.size.width);
-
-            try children.append(ctx.arena, .{
-                .origin = .{ .row = height + 1, .col = 0 },
-                .surface = try (vxfw.Text{
-                    .text = "SBIT ",
-                }).widget().draw(ctx),
-            });
-
-            try children.append(ctx.arena, .{
-                .origin = .{ .row = height, .col = ddoffset },
-                .surface = try (vxfw.Border{
-                    .child = self.stopbits_dropdown.widget(),
-                }).widget().draw(ctx),
-            });
-
-            height += children.getLast().surface.size.height;
-            width = @max(width, children.getLast().surface.size.width);
-        } else {
-            // TCP/UDP mode: IP:Port input
-            const label = "ADDR ";
-            try children.append(ctx.arena, .{
-                .origin = .{ .row = height + 1, .col = 0 },
-                .surface = try (vxfw.Text{ .text = label }).widget().draw(ctx),
-            });
-
-            const input_width: u16 = 20;
-            try children.append(ctx.arena, .{
-                .origin = .{ .row = height, .col = ddoffset },
-                .surface = try self.ip_input.widget().draw(ctx.withConstraints(
-                    .{ .width = 0, .height = 1 },
-                    .{ .width = input_width, .height = 1 },
-                )),
-            });
-
-            const field_width = ddoffset + input_width;
-            width = @max(width, field_width);
-            height += 1;
-        }
-
-        return .{
-            .size = .{ .width = width, .height = height },
-            .widget = self.widget(),
-            .buffer = &.{},
-            .children = children.items,
-        };
+    pub fn deinit(self: *ConfigView, allocator: Allocator) void {
+        self.ser_view.deinit(allocator);
+        self.tcp_view.deinit();
+        self.udp_view.deinit();
     }
-
 };
