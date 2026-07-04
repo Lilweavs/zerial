@@ -45,12 +45,14 @@ pub const BorderWithTab = struct {
                 if (key.matches(vaxis.Key.tab, .{})) {
                     if (self.tabs.len > 1) {
                         self.active = (self.active + 1) % self.tabs.len;
+                        try ctx.requestFocus(self.tabs[self.active].child);
                         return ctx.consumeAndRedraw();
                     }
                 }
                 if (key.matches(vaxis.Key.tab, .{ .shift = true })) {
                     if (self.tabs.len > 1) {
                         self.active = (self.active + self.tabs.len - 1) % self.tabs.len;
+                        try ctx.requestFocus(self.tabs[self.active].child);
                         return ctx.consumeAndRedraw();
                     }
                 }
@@ -98,7 +100,7 @@ pub const BorderWithTab = struct {
 
         const child = try active.child.draw(child_ctx);
         const min_w: u16 = @max(total_width, body_right + 1);
-        const surf_w: u16 = @max(min_w, child.size.width + 2);
+        const surf_w: u16 = @max(min_w, child.size.width + 3);
         const surf_h: u16 = @max(child.size.height + 5, 5);
 
         var children = try ctx.arena.alloc(vxfw.SubSurface, 1);

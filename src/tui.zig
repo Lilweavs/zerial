@@ -325,11 +325,6 @@ pub const Tui = struct {
                         return ctx.consumeAndRedraw();
                     },
                     .SerTcpUdpOverlay => {
-                        if (key.matches(vaxis.Key.escape, .{})) {
-                            self.state = .Home;
-                            try ctx.requestFocus(self.widget());
-                            return ctx.consumeAndRedraw();
-                        }
                         try self.config_view.handleEvent(ctx, event);
                         return ctx.consumeAndRedraw();
                     },

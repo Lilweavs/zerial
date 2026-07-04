@@ -153,6 +153,9 @@ pub const SerView = struct {
         if (key.matches('k', .{})) {
             self.index -|= 1;
         }
+        if (key.matches(vaxis.Key.escape, .{})) {
+            _ = self.event_queue.tryPush(.Home) catch @panic("not handled");
+        }
     }
 
     fn setSelected(self: *SerView) void {

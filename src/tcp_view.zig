@@ -22,6 +22,7 @@ pub const TcpView = struct {
     },
 
     index: usize = 0,
+    editing: bool = false,
 
     event_queue: *EventQueue,
     allocator: Allocator,
@@ -71,8 +72,24 @@ pub const TcpView = struct {
                         self.moveFocus(ctx, key);
                     },
                     1 => {
-                        try self.ip_input.handleEvent(ctx, event);
-                        return ctx.consumeAndRedraw();
+                        if (self.editing) {
+                            if (key.matches(vaxis.Key.enter, .{}) or key.matches(vaxis.Key.escape, .{})) {
+                                self.editing = false;
+                                try self.ip_input.handleEvent(ctx, .focus_out);
+                                try ctx.requestFocus(self.widget());
+                                return ctx.consumeAndRedraw();
+                            }
+                            try self.ip_input.handleEvent(ctx, event);
+                            return ctx.consumeAndRedraw();
+                        } else {
+                            if (key.matches(vaxis.Key.enter, .{})) {
+                                self.editing = true;
+                                try self.ip_input.handleEvent(ctx, .focus_in);
+                                try ctx.requestFocus(self.ip_input.widget());
+                                return ctx.consumeAndRedraw();
+                            }
+                            self.moveFocus(ctx, key);
+                        }
                     },
                     else => {},
                 }
@@ -89,6 +106,9 @@ pub const TcpView = struct {
         if (key.matches('k', .{})) {
             self.index -|= 1;
         }
+        if (key.matches(vaxis.Key.escape, .{})) {
+            _ = self.event_queue.tryPush(.Home) catch @panic("not handled");
+        }
     }
 
     fn setSelected(self: *TcpView) void {
@@ -102,7 +122,7 @@ pub const TcpView = struct {
     pub fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
         const self: *TcpView = @ptrCast(@alignCast(ptr));
 
-        var height: u16 = 0;
+        var height: u16 = 2; // fields start at row 2 (row 0 button, row 1 horizontal line)
         var width: u16 = 0;
 
         var children: std.ArrayList(vxfw.SubSurface) = .empty;
@@ -111,38 +131,35 @@ pub const TcpView = struct {
 
         self.button.label = if (self.is_stream_open) "Close" else "Open";
 
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = 0, .col = 0 },
-            .surface = try self.button.widget().draw(ctx.withConstraints(.{}, .{ .width = 8, .height = 1 })),
-        });
-        height += children.getLast().surface.size.height;
-
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = 0 },
-            .surface = try (HorizontalLine{}).widget().draw(
-                ctx.withConstraints(.{}, .{ .width = 30, .height = 1 }),
-            ),
-        });
-        height += 1;
-
-        const label = "ADDR ";
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height + 1, .col = 0 },
-            .surface = try (vxfw.Text{ .text = label }).widget().draw(ctx),
-        });
-
-        const input_width: u16 = 20;
-        try children.append(ctx.arena, .{
-            .origin = .{ .row = height, .col = ddoffset },
-            .surface = try self.ip_input.widget().draw(ctx.withConstraints(
+        // Address input: label and input on the same row
+        {
+            const label = try (vxfw.Text{ .text = "ADDR " }).widget().draw(ctx);
+            const input_width: u16 = 20;
+            const input = try self.ip_input.widget().draw(ctx.withConstraints(
                 .{ .width = 0, .height = 1 },
                 .{ .width = input_width, .height = 1 },
-            )),
-        });
+            ));
+            try children.append(ctx.arena, .{ .origin = .{ .row = height, .col = 0 }, .surface = label });
+            try children.append(ctx.arena, .{ .origin = .{ .row = height, .col = ddoffset }, .surface = input });
+            width = @max(width, label.size.width, ddoffset + input.size.width);
+            height += 1;
+        }
 
-        const field_width = ddoffset + input_width;
-        width = @max(width, field_width);
-        height += 1;
+        // Button at row 0, centered
+        {
+            const surf = try self.button.widget().draw(ctx.withConstraints(.{}, .{ .width = 8, .height = 1 }));
+            const btn_x = (width -| surf.size.width) / 2;
+            try children.append(ctx.arena, .{ .origin = .{ .row = 0, .col = btn_x }, .surface = surf });
+            width = @max(width, surf.size.width);
+        }
+
+        // HorizontalLine at row 1, spanning full content width
+        try children.append(ctx.arena, .{
+            .origin = .{ .row = 1, .col = 0 },
+            .surface = try (HorizontalLine{}).widget().draw(
+                ctx.withConstraints(.{}, .{ .width = width, .height = 1 }),
+            ),
+        });
 
         return .{
             .size = .{ .width = width, .height = height },
