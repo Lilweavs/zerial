@@ -271,6 +271,7 @@ pub const Tui = struct {
                         .PageDown => self.record_store.pageDown(),
                         .StreamOpenClose => {
                             if (!self.stream_manager.isOpen()) {
+                                self.stream_manager.last_error = null;
                                 switch (self.config_view.ser_tcp_udp.active) {
                                     0 => {
                                         const cfg = self.config_view.ser_view.getSerialConfigOptions();
@@ -289,20 +290,35 @@ pub const Tui = struct {
                                         };
                                         const host = try self.config_view.tcp_view.ip_input.buf.dupe();
                                         defer self.allocator.free(host);
-                                        if (self.config_view.tcp_view.is_listener) {
-                                            self.stream_manager.openNetListener(host, port) catch |e| {
-                                                self.stream_manager.last_error = e;
-                                                return ctx.consumeAndRedraw();
-                                            };
-                                        } else {
-                                            self.stream_manager.openNet(host, port, .TCP) catch |e| {
-                                                self.stream_manager.last_error = e;
-                                                return ctx.consumeAndRedraw();
-                                            };
-                                        }
+                                const tcp_host = if (std.ascii.eqlIgnoreCase(host, "localhost"))
+                                    "127.0.0.1"
+                                else
+                                    host;
+                                const tcp_addr = std.Io.net.IpAddress.parseLiteral(tcp_host) catch {
+                                    self.stream_manager.last_error = error.InvalidAddress;
+                                    return ctx.consumeAndRedraw();
+                                };
+                                switch (tcp_addr) {
+                                    .ip6 => {
+                                        self.stream_manager.last_error = error.InvalidAddress;
+                                        return ctx.consumeAndRedraw();
+                                    },
+                                    else => {},
+                                }
+                                if (self.config_view.tcp_view.is_listener) {
+                                    self.stream_manager.openNetListener(tcp_host, port) catch |e| {
+                                        self.stream_manager.last_error = e;
+                                        return ctx.consumeAndRedraw();
+                                    };
+                                } else {
+                                    self.stream_manager.openNet(tcp_host, port, .TCP) catch |e| {
+                                        self.stream_manager.last_error = e;
+                                        return ctx.consumeAndRedraw();
+                                    };
+                                }
                                         self.config_view.tcp_view.is_stream_open = true;
                                     },
-                                    2 => {
+                                     2 => {
                                         const host = try self.config_view.udp_view.ip_input.buf.dupe();
                                         defer self.allocator.free(host);
                                         const port_text = try self.config_view.udp_view.port_input.buf.dupe();
@@ -311,7 +327,22 @@ pub const Tui = struct {
                                             self.stream_manager.last_error = e;
                                             return ctx.consumeAndRedraw();
                                         };
-                                        self.stream_manager.openNet(host, port, .UDP) catch |e| {
+                                        const udp_host = if (std.ascii.eqlIgnoreCase(host, "localhost"))
+                                            "127.0.0.1"
+                                        else
+                                            host;
+                                        const udp_addr = std.Io.net.IpAddress.parseLiteral(udp_host) catch {
+                                            self.stream_manager.last_error = error.InvalidAddress;
+                                            return ctx.consumeAndRedraw();
+                                        };
+                                        switch (udp_addr) {
+                                            .ip6 => {
+                                                self.stream_manager.last_error = error.InvalidAddress;
+                                                return ctx.consumeAndRedraw();
+                                            },
+                                            else => {},
+                                        }
+                                        self.stream_manager.openNet(udp_host, port, .UDP) catch |e| {
                                             self.stream_manager.last_error = e;
                                             return ctx.consumeAndRedraw();
                                         };

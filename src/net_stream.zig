@@ -30,9 +30,15 @@ pub fn openStream(io: std.Io, allocator: Allocator, host: []const u8, port: u16,
 
     const socket = switch (mode) {
         .TCP => blk: {
-            const host_name = try net.HostName.init(host);
-            const stream = try host_name.connect(io, port, .{ .mode = .stream, .protocol = .tcp });
-            break :blk stream.socket;
+            if (net.IpAddress.parseLiteral(host)) |addr| {
+                var address = addr;
+                address.setPort(port);
+                break :blk (try address.connect(io, .{ .mode = .stream, .protocol = .tcp })).socket;
+            } else |_| {
+                const host_name = try net.HostName.init(host);
+                const stream = try host_name.connect(io, port, .{ .mode = .stream, .protocol = .tcp });
+                break :blk stream.socket;
+            }
         },
         .UDP => blk: {
             const resolved_addr = net.IpAddress.parseLiteral(host) catch {

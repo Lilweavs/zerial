@@ -41,7 +41,6 @@ pub const UdpView = struct {
 
     fn connectOrDisconnect(ptr: ?*anyopaque, _: *vxfw.EventContext) anyerror!void {
         const self: *UdpView = @ptrCast(@alignCast(ptr.?));
-        if (!self.is_ip_valid or !self.is_port_valid) return;
         try self.event_queue.push(.StreamOpenClose);
     }
 

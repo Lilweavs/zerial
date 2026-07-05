@@ -42,7 +42,6 @@ pub const TcpView = struct {
 
     fn connectOrDisconnect(ptr: ?*anyopaque, _: *vxfw.EventContext) anyerror!void {
         const self: *TcpView = @ptrCast(@alignCast(ptr.?));
-        if (!self.is_ip_valid or !self.is_port_valid) return;
         try self.event_queue.push(.StreamOpenClose);
     }
 
