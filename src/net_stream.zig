@@ -41,7 +41,7 @@ pub fn openStream(io: std.Io, allocator: Allocator, host: []const u8, port: u16,
             }
         },
         .UDP => blk: {
-            const resolved_addr = net.IpAddress.parseLiteral(host) catch {
+            var resolved_addr = net.IpAddress.parseLiteral(host) catch {
                 const host_name = try net.HostName.init(host);
                 var lookup_buf: [32]net.HostName.LookupResult = undefined;
                 var queue: std.Io.Queue(net.HostName.LookupResult) = .init(&lookup_buf);
@@ -55,6 +55,7 @@ pub fn openStream(io: std.Io, allocator: Allocator, host: []const u8, port: u16,
                     else => return error.UnknownHostName,
                 };
             };
+            resolved_addr.setPort(port);
             break :blk try io.vtable.netConnectIp(io.userdata, &resolved_addr, .{ .mode = .dgram, .protocol = .udp });
         },
     };
@@ -178,6 +179,75 @@ pub fn listen(io: std.Io, allocator: Allocator, host: []const u8, port: u16) !Tc
         .host = host_dup,
         .port = port,
         .allocator = allocator,
+    };
+}
+
+const UdpBoundStream = struct {
+    socket: net.Socket,
+    io: std.Io,
+    host: []const u8,
+    port: u16,
+    rx_bytes: u64 = 0,
+    last_sender: ?net.IpAddress = null,
+    mutex: std.atomic.Mutex = .unlocked,
+
+    fn read(ctx: *anyopaque, io: std.Io, buf: []u8) anyerror!usize {
+        const self: *UdpBoundStream = @ptrCast(@alignCast(ctx));
+        const msg = try self.socket.receive(io, buf);
+        while (!self.mutex.tryLock()) {}
+        self.last_sender = msg.from;
+        self.mutex.unlock();
+        self.rx_bytes += msg.data.len;
+        return msg.data.len;
+    }
+
+    fn write(ctx: *anyopaque, io: std.Io, buf: []const u8) anyerror!usize {
+        const self: *UdpBoundStream = @ptrCast(@alignCast(ctx));
+        if (buf.len == 0) return 0;
+        while (!self.mutex.tryLock()) {}
+        const dest = self.last_sender;
+        self.mutex.unlock();
+        const d = dest orelse return error.NotConnected;
+        try self.socket.send(io, &d, buf);
+        return buf.len;
+    }
+
+    fn close(ctx: *anyopaque, io: std.Io, allocator: Allocator) void {
+        const self: *UdpBoundStream = @ptrCast(@alignCast(ctx));
+        self.socket.close(io);
+        allocator.free(self.host);
+        allocator.destroy(self);
+    }
+
+    fn status(ctx: *anyopaque, allocator: Allocator) anyerror![]const u8 {
+        const self: *UdpBoundStream = @ptrCast(@alignCast(ctx));
+        return try std.fmt.allocPrint(allocator, "UDP Listening on {s}:{}", .{ self.host, self.port });
+    }
+};
+
+pub fn bind(io: std.Io, allocator: Allocator, host: []const u8, port: u16) !Stream {
+    // TODO fix this workaround when std library fixes this
+    if (port < 1024) return error.AccessDenied;
+
+    var address = try net.IpAddress.parseLiteral(host);
+    address.setPort(port);
+    const socket = try address.bind(io, .{ .mode = .dgram, .protocol = .udp });
+    const host_dup = try allocator.dupe(u8, host);
+
+    const self = try allocator.create(UdpBoundStream);
+    errdefer allocator.destroy(self);
+    self.* = .{
+        .socket = socket,
+        .io = io,
+        .host = host_dup,
+        .port = port,
+    };
+    return .{
+        .ctx = self,
+        .readFn = UdpBoundStream.read,
+        .writeFn = UdpBoundStream.write,
+        .closeFn = UdpBoundStream.close,
+        .statusFn = UdpBoundStream.status,
     };
 }
 

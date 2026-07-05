@@ -17,6 +17,7 @@ pub const UdpView = struct {
     is_ip_valid: bool = false,
     is_port_valid: bool = false,
     is_stream_open: bool = false,
+    is_listener: bool = false,
 
     button: vxfw.Button = .{
         .label = "Open",
@@ -81,6 +82,13 @@ pub const UdpView = struct {
                         self.moveFocus(ctx, key);
                     },
                     1 => {
+                        if (key.matches(vaxis.Key.enter, .{})) {
+                            self.is_listener = !self.is_listener;
+                            return ctx.consumeAndRedraw();
+                        }
+                        self.moveFocus(ctx, key);
+                    },
+                    2 => {
                         if (self.editing) {
                             if (key.matches(vaxis.Key.enter, .{}) or key.matches(vaxis.Key.escape, .{})) {
                                 self.editing = false;
@@ -100,7 +108,7 @@ pub const UdpView = struct {
                             self.moveFocus(ctx, key);
                         }
                     },
-                    2 => {
+                    3 => {
                         if (self.editing) {
                             if (key.matches(vaxis.Key.enter, .{}) or key.matches(vaxis.Key.escape, .{})) {
                                 self.editing = false;
@@ -129,7 +137,7 @@ pub const UdpView = struct {
 
     fn moveFocus(self: *UdpView, ctx: *vxfw.EventContext, key: vaxis.Key) void {
         if (key.matches('j', .{})) {
-            self.index = @min(self.index + 1, @as(usize, 2));
+            self.index = @min(self.index + 1, @as(usize, 3));
             return ctx.consumeAndRedraw();
         }
         if (key.matches('k', .{})) {
@@ -148,10 +156,11 @@ pub const UdpView = struct {
         self.port_input.style = .{};
         switch (self.index) {
             0 => self.button.focused = true,
-            1 => {
+            1 => {},
+            2 => {
                 if (!self.editing) self.ip_input.style = .{ .reverse = true };
             },
-            2 => {
+            3 => {
                 if (!self.editing) self.port_input.style = .{ .reverse = true };
             },
             else => {},
@@ -168,7 +177,26 @@ pub const UdpView = struct {
 
         self.setSelected();
 
-        self.button.label = if (self.is_stream_open) "Close" else "Open";
+        self.button.label = if (self.is_stream_open)
+            "Close"
+        else if (self.is_listener)
+            "Listen"
+        else
+            "Connect";
+
+        // Mode indicator
+        {
+            const mode_text = if (self.is_listener) "Listen" else "Connect";
+            const label = try (vxfw.Text{ .text = "MODE " }).widget().draw(ctx);
+            const value = try (vxfw.Text{
+                .text = mode_text,
+                .style = if (self.index == 1 and !self.editing) .{ .reverse = true } else .{},
+            }).widget().draw(ctx);
+            try children.append(ctx.arena, .{ .origin = .{ .row = height, .col = 0 }, .surface = label });
+            try children.append(ctx.arena, .{ .origin = .{ .row = height, .col = ddoffset }, .surface = value });
+            width = @max(width, label.size.width, ddoffset + value.size.width);
+            height += 1;
+        }
 
         // Address input: label and input on the same row
         {

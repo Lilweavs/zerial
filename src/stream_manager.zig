@@ -89,6 +89,15 @@ pub const StreamManager = struct {
         self.reader_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, StreamManager.listenerAcceptorThread, .{self});
     }
 
+    pub fn openUdpListener(self: *StreamManager, host: []const u8, port: u16) !void {
+        self.last_error = null;
+        self.stream = try NetStream.bind(self.io, self.allocator, host, port);
+        self.stream_status.store(@intFromEnum(StreamStatus.Open), .monotonic);
+        self.up_time = std.Io.Timestamp.now(self.io, .awake);
+        self.reader_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, StreamManager.streamReaderThread, .{self});
+        self.writer_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, StreamManager.streamWriterThread, .{self});
+    }
+
     pub fn close(self: *StreamManager) void {
         self.last_error = null;
         self.stream_status.store(@intFromEnum(StreamStatus.Closed), .monotonic);

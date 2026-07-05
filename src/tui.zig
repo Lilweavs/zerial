@@ -342,10 +342,17 @@ pub const Tui = struct {
                                             },
                                             else => {},
                                         }
-                                        self.stream_manager.openNet(udp_host, port, .UDP) catch |e| {
-                                            self.stream_manager.last_error = e;
-                                            return ctx.consumeAndRedraw();
-                                        };
+                                        if (self.config_view.udp_view.is_listener) {
+                                            self.stream_manager.openUdpListener(udp_host, port) catch |e| {
+                                                self.stream_manager.last_error = e;
+                                                return ctx.consumeAndRedraw();
+                                            };
+                                        } else {
+                                            self.stream_manager.openNet(udp_host, port, .UDP) catch |e| {
+                                                self.stream_manager.last_error = e;
+                                                return ctx.consumeAndRedraw();
+                                            };
+                                        }
                                         self.config_view.udp_view.is_stream_open = true;
                                     },
                                     else => unreachable,
