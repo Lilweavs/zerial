@@ -135,7 +135,10 @@ pub const StreamManager = struct {
                 .bytes => |data| {
                     errdefer self.allocator.free(data);
                     const stream = self.stream orelse break;
-                    _ = try stream.write(self.io, data);
+                    _ = stream.write(self.io, data) catch |e| switch (e) {
+                        error.InputOutput, error.BrokenPipe, error.ConnectionResetByPeer => break,
+                        else => |err| return err,
+                    };
                     if (try self.read_queue.tryPush(.{
                         .rxOrTx = .TX,
                         .text = data,

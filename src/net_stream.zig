@@ -80,7 +80,8 @@ fn read(ctx: *anyopaque, io: std.Io, buf: []u8) anyerror!usize {
 
 fn write(ctx: *anyopaque, io: std.Io, buf: []const u8) anyerror!usize {
     const self: *NetStream = @ptrCast(@alignCast(ctx));
-    _ = try io.vtable.netWrite(io.userdata, self.socket.handle, buf, &.{}, 0);
+    if (buf.len == 0) return 0;
+    _ = try io.vtable.netWrite(io.userdata, self.socket.handle, buf, &.{""}, 0);
     return buf.len;
 }
 
@@ -122,7 +123,14 @@ pub const TcpListener = struct {
 
     pub fn accept(self: *TcpListener) !Stream {
         const client = try self.server.accept(self.io);
-        const host = try std.fmt.allocPrint(self.allocator, "{}", .{client.socket.address});
+        const host = switch (client.socket.address) {
+            .ip4 => |ip| try std.fmt.allocPrint(self.allocator, "{d}.{d}.{d}.{d}", .{
+                ip.bytes[0], ip.bytes[1], ip.bytes[2], ip.bytes[3],
+            }),
+            .ip6 => |ip| try std.fmt.allocPrint(self.allocator, "{}", .{
+                net.Ip6Address.Unresolved{ .bytes = ip.bytes, .interface_name = null },
+            }),
+        };
         errdefer self.allocator.free(host);
 
         const ns = try self.allocator.create(NetStream);
