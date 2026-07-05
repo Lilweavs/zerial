@@ -165,6 +165,9 @@ pub const TcpListener = struct {
 };
 
 pub fn listen(io: std.Io, allocator: Allocator, host: []const u8, port: u16) !TcpListener {
+    // TODO fix this workaround when std library fixes this
+    if (port < 1024) return error.AccessDenied;
+
     var address = try net.IpAddress.parseLiteral(host);
     address.setPort(port);
     const server = try address.listen(io, .{});
