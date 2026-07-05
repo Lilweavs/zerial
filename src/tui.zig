@@ -247,6 +247,18 @@ pub const Tui = struct {
             },
             .tick => {
                 try ctx.tick(std.time.ms_per_s / 60, self.widget());
+                if (!self.stream_manager.isOpen()) {
+                    if (self.config_view.tcp_view.is_stream_open or
+                        self.config_view.udp_view.is_stream_open or
+                        self.config_view.ser_view.is_stream_open)
+                    {
+                        self.stream_manager.close();
+                        self.config_view.ser_view.is_stream_open = false;
+                        self.config_view.tcp_view.is_stream_open = false;
+                        self.config_view.udp_view.is_stream_open = false;
+                        try ctx.requestFocus(self.widget());
+                    }
+                }
                 while (try self.stream_manager.read_queue.tryPop()) |record| {
                     try self.record_store.addRecord(self.allocator, record);
                 }
