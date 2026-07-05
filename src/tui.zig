@@ -275,14 +275,14 @@ pub const Tui = struct {
                                             self.stream_manager.last_error = e;
                                             return ctx.consumeAndRedraw();
                                         };
+                                        const host = try self.config_view.tcp_view.ip_input.buf.dupe();
+                                        defer self.allocator.free(host);
                                         if (self.config_view.tcp_view.is_listener) {
-                                            self.stream_manager.openNetListener(port) catch |e| {
+                                            self.stream_manager.openNetListener(host, port) catch |e| {
                                                 self.stream_manager.last_error = e;
                                                 return ctx.consumeAndRedraw();
                                             };
                                         } else {
-                                            const host = try self.config_view.tcp_view.ip_input.buf.dupe();
-                                            defer self.allocator.free(host);
                                             self.stream_manager.openNet(host, port, .TCP) catch |e| {
                                                 self.stream_manager.last_error = e;
                                                 return ctx.consumeAndRedraw();

@@ -42,11 +42,7 @@ pub const TcpView = struct {
 
     fn connectOrDisconnect(ptr: ?*anyopaque, _: *vxfw.EventContext) anyerror!void {
         const self: *TcpView = @ptrCast(@alignCast(ptr.?));
-        if (self.is_listener) {
-            if (!self.is_port_valid) return;
-        } else {
-            if (!self.is_ip_valid or !self.is_port_valid) return;
-        }
+        if (!self.is_ip_valid or !self.is_port_valid) return;
         try self.event_queue.push(.StreamOpenClose);
     }
 
@@ -163,11 +159,7 @@ pub const TcpView = struct {
             0 => self.button.focused = true,
             1 => {},
             2 => {
-                if (self.is_listener) {
-                    self.ip_input.style = .{ .dim = true };
-                } else if (!self.editing) {
-                    self.ip_input.style = .{ .reverse = true };
-                }
+                if (!self.editing) self.ip_input.style = .{ .reverse = true };
             },
             3 => {
                 if (!self.editing) self.port_input.style = .{ .reverse = true };
@@ -209,8 +201,7 @@ pub const TcpView = struct {
 
         // Address input: label and input on the same row
         {
-            const addr_style: vaxis.Style = if (self.is_listener) .{ .dim = true } else .{};
-            const label = try (vxfw.Text{ .text = "ADDR ", .style = addr_style }).widget().draw(ctx);
+            const label = try (vxfw.Text{ .text = "ADDR " }).widget().draw(ctx);
             const input_width: u16 = 20;
             var input = try self.ip_input.widget().draw(ctx.withConstraints(
                 .{ .width = 0, .height = 1 },

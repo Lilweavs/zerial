@@ -81,9 +81,9 @@ pub const StreamManager = struct {
         self.writer_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, StreamManager.streamWriterThread, .{self});
     }
 
-    pub fn openNetListener(self: *StreamManager, port: u16) !void {
+    pub fn openNetListener(self: *StreamManager, host: []const u8, port: u16) !void {
         self.last_error = null;
-        self.listener = try NetStream.listen(self.io, port);
+        self.listener = try NetStream.listen(self.io, self.allocator, host, port);
         self.stream_status.store(@intFromEnum(StreamStatus.Open), .monotonic);
         self.up_time = std.Io.Timestamp.now(self.io, .awake);
         self.reader_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, StreamManager.listenerAcceptorThread, .{self});
@@ -107,14 +107,14 @@ pub const StreamManager = struct {
 
     pub fn statusText(self: *const StreamManager, arena: Allocator) ![]const u8 {
         if (self.listener) |l| {
-            return try std.fmt.allocPrint(arena, "Listening on port {} ...", .{l.port});
+            return try std.fmt.allocPrint(arena, "Listening on {s}:{} ...", .{ l.host, l.port });
         }
         const s = self.stream orelse return "";
         return s.status(arena);
     }
 
     fn listenerAcceptorThread(self: *StreamManager) !void {
-        const accepted = try self.listener.?.accept(self.allocator);
+        const accepted = try self.listener.?.accept();
         self.stream = accepted;
         self.listener.?.deinit();
         self.listener = null;

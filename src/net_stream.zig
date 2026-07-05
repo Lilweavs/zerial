@@ -116,15 +116,17 @@ fn status(ctx: *anyopaque, allocator: Allocator) anyerror![]const u8 {
 pub const TcpListener = struct {
     server: net.Server,
     io: std.Io,
+    host: []const u8,
     port: u16,
+    allocator: Allocator,
 
-    pub fn accept(self: *TcpListener, allocator: Allocator) !Stream {
+    pub fn accept(self: *TcpListener) !Stream {
         const client = try self.server.accept(self.io);
-        const host = try std.fmt.allocPrint(allocator, "{}", .{client.socket.address});
-        errdefer allocator.free(host);
+        const host = try std.fmt.allocPrint(self.allocator, "{}", .{client.socket.address});
+        errdefer self.allocator.free(host);
 
-        const ns = try allocator.create(NetStream);
-        errdefer allocator.destroy(ns);
+        const ns = try self.allocator.create(NetStream);
+        errdefer self.allocator.destroy(ns);
 
         ns.* = .{
             .socket = client.socket,
@@ -144,16 +146,21 @@ pub const TcpListener = struct {
 
     pub fn deinit(self: *TcpListener) void {
         self.server.deinit(self.io);
+        self.allocator.free(self.host);
     }
 };
 
-pub fn listen(io: std.Io, port: u16) !TcpListener {
-    const address = net.IpAddress{ .ip4 = net.Ip4Address.unspecified(port) };
+pub fn listen(io: std.Io, allocator: Allocator, host: []const u8, port: u16) !TcpListener {
+    var address = try net.IpAddress.parseLiteral(host);
+    address.setPort(port);
     const server = try address.listen(io, .{});
+    const host_dup = try allocator.dupe(u8, host);
     return .{
         .server = server,
         .io = io,
+        .host = host_dup,
         .port = port,
+        .allocator = allocator,
     };
 }
 
