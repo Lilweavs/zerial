@@ -78,9 +78,17 @@ pub const DropDown = struct {
 
         if (self.is_expanded) {
             for (0..self.list.len) |i| {
+                const display = if (std.mem.indexOfScalar(u8, self.list[i], '\n')) |nl|
+                    try std.fmt.allocPrint(ctx.arena, "[+{d}] {s}", .{
+                        std.mem.count(u8, self.list[i][nl..], "\n"),
+                        self.list[i][0..nl],
+                    })
+                else
+                    self.list[i];
+
                 try children.append(ctx.arena, .{
                     .origin = .{ .row = @intCast(i), .col = 0 },
-                    .surface = try (vxfw.Text{ .text = self.list[i], .style = .{ .reverse = (i == self.index) } }).widget().draw(ctx),
+                    .surface = try (vxfw.Text{ .text = display, .style = .{ .reverse = (i == self.index) } }).widget().draw(ctx),
                 });
                 col = @max(col, children.getLast().surface.size.width);
             }
@@ -95,10 +103,19 @@ pub const DropDown = struct {
                     }).widget().draw(ctx),
                 });
             } else {
+                const item = self.list[@min(self.index, self.list.len -| 1)];
+                const display = if (std.mem.indexOfScalar(u8, item, '\n')) |nl|
+                    try std.fmt.allocPrint(ctx.arena, "[+{d}] {s}", .{
+                        std.mem.count(u8, item[nl..], "\n"),
+                        item[0..nl],
+                    })
+                else
+                    item;
+
                 try children.append(ctx.arena, .{
                     .origin = .{ .row = 0, .col = 0 },
                     .surface = try (vxfw.Text{
-                        .text = self.list[@min(self.index, self.list.len -| 1)],
+                        .text = display,
                         .style = .{ .reverse = (self.is_focused == true) },
                     }).widget().draw(ctx),
                 });
