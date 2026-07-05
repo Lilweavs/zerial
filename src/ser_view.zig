@@ -146,15 +146,17 @@ pub const SerView = struct {
     }
 
     fn moveFocus(self: *SerView, ctx: *vxfw.EventContext, key: vaxis.Key) void {
-        _ = ctx;
         if (key.matches('j', .{})) {
             self.index = @min(self.index + 1, @as(usize, 5));
+            return ctx.consumeAndRedraw();
         }
         if (key.matches('k', .{})) {
             self.index -|= 1;
+            return ctx.consumeAndRedraw();
         }
         if (key.matches(vaxis.Key.escape, .{})) {
             _ = self.event_queue.tryPush(.Home) catch @panic("not handled");
+            return ctx.consumeAndRedraw();
         }
     }
 

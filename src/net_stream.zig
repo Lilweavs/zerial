@@ -113,6 +113,50 @@ fn status(ctx: *anyopaque, allocator: Allocator) anyerror![]const u8 {
     });
 }
 
+pub const TcpListener = struct {
+    server: net.Server,
+    io: std.Io,
+    port: u16,
+
+    pub fn accept(self: *TcpListener, allocator: Allocator) !Stream {
+        const client = try self.server.accept(self.io);
+        const host = try std.fmt.allocPrint(allocator, "{}", .{client.socket.address});
+        errdefer allocator.free(host);
+
+        const ns = try allocator.create(NetStream);
+        errdefer allocator.destroy(ns);
+
+        ns.* = .{
+            .socket = client.socket,
+            .mode = .TCP,
+            .io = self.io,
+            .host = host,
+            .port = self.port,
+        };
+        return .{
+            .ctx = ns,
+            .readFn = read,
+            .writeFn = write,
+            .closeFn = close,
+            .statusFn = status,
+        };
+    }
+
+    pub fn deinit(self: *TcpListener) void {
+        self.server.deinit(self.io);
+    }
+};
+
+pub fn listen(io: std.Io, port: u16) !TcpListener {
+    const address = net.IpAddress{ .ip4 = net.Ip4Address.unspecified(port) };
+    const server = try address.listen(io, .{});
+    return .{
+        .server = server,
+        .io = io,
+        .port = port,
+    };
+}
+
 pub fn parseHostPort(text: []const u8) !struct { host: []const u8, port: u16 } {
     if (text.len == 0) return error.InvalidAddress;
 

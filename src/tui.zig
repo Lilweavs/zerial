@@ -5,8 +5,6 @@ const Serial = @import("serial.zig");
 const Record = @import("record.zig").Record;
 const RecordStore = @import("record_store.zig").RecordStore;
 const StreamManager = @import("stream_manager.zig").StreamManager;
-const NetStream = @import("net_stream.zig");
-
 const Allocator = std.mem.Allocator;
 
 const vxfw = vaxis.vxfw;
@@ -150,11 +148,13 @@ pub const Tui = struct {
                     .event_queue = undefined,
                     .allocator = allocator,
                     .ip_input = .{ .buf = .init(allocator) },
+                    .port_input = .{ .buf = .init(allocator) },
                 },
                 .udp_view = .{
                     .event_queue = undefined,
                     .allocator = allocator,
                     .ip_input = .{ .buf = .init(allocator) },
+                    .port_input = .{ .buf = .init(allocator) },
                 },
                 .ser_tcp_udp_tabs = undefined,
                 .ser_tcp_udp = undefined,
@@ -269,26 +269,37 @@ pub const Tui = struct {
                                         self.config_view.ser_view.is_stream_open = true;
                                     },
                                     1 => {
-                                        const text = try self.config_view.tcp_view.ip_input.buf.dupe();
-                                        defer self.allocator.free(text);
-                                        const parsed = NetStream.parseHostPort(text) catch |e| {
+                                        const port_text = try self.config_view.tcp_view.port_input.buf.dupe();
+                                        defer self.allocator.free(port_text);
+                                        const port = std.fmt.parseInt(u16, port_text, 10) catch |e| {
                                             self.stream_manager.last_error = e;
                                             return ctx.consumeAndRedraw();
                                         };
-                                        self.stream_manager.openNet(parsed.host, parsed.port, .TCP) catch |e| {
-                                            self.stream_manager.last_error = e;
-                                            return ctx.consumeAndRedraw();
-                                        };
+                                        if (self.config_view.tcp_view.is_listener) {
+                                            self.stream_manager.openNetListener(port) catch |e| {
+                                                self.stream_manager.last_error = e;
+                                                return ctx.consumeAndRedraw();
+                                            };
+                                        } else {
+                                            const host = try self.config_view.tcp_view.ip_input.buf.dupe();
+                                            defer self.allocator.free(host);
+                                            self.stream_manager.openNet(host, port, .TCP) catch |e| {
+                                                self.stream_manager.last_error = e;
+                                                return ctx.consumeAndRedraw();
+                                            };
+                                        }
                                         self.config_view.tcp_view.is_stream_open = true;
                                     },
                                     2 => {
-                                        const text = try self.config_view.udp_view.ip_input.buf.dupe();
-                                        defer self.allocator.free(text);
-                                        const parsed = NetStream.parseHostPort(text) catch |e| {
+                                        const host = try self.config_view.udp_view.ip_input.buf.dupe();
+                                        defer self.allocator.free(host);
+                                        const port_text = try self.config_view.udp_view.port_input.buf.dupe();
+                                        defer self.allocator.free(port_text);
+                                        const port = std.fmt.parseInt(u16, port_text, 10) catch |e| {
                                             self.stream_manager.last_error = e;
                                             return ctx.consumeAndRedraw();
                                         };
-                                        self.stream_manager.openNet(parsed.host, parsed.port, .UDP) catch |e| {
+                                        self.stream_manager.openNet(host, port, .UDP) catch |e| {
                                             self.stream_manager.last_error = e;
                                             return ctx.consumeAndRedraw();
                                         };

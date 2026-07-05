@@ -21,6 +21,7 @@ const StreamStatus = enum(u8) {
 
 pub const StreamManager = struct {
     stream: ?Stream = null,
+    listener: ?NetStream.TcpListener = null,
     stream_status: std.atomic.Value(u8) = std.atomic.Value(u8).init(@intFromEnum(StreamStatus.Closed)),
     write_queue: vaxis.Queue(SendMessage, 8),
     read_queue: vaxis.Queue(Record, 64),
@@ -45,6 +46,8 @@ pub const StreamManager = struct {
         self.stream_status.store(@intFromEnum(StreamStatus.Closed), .monotonic);
         if (self.stream) |s| s.close(self.io, self.allocator);
         self.stream = null;
+        if (self.listener) |*l| l.deinit();
+        self.listener = null;
         while (self.write_queue.drain()) |item| {
             switch (item) {
                 .bytes => |data| self.allocator.free(data),
@@ -78,11 +81,21 @@ pub const StreamManager = struct {
         self.writer_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, StreamManager.streamWriterThread, .{self});
     }
 
+    pub fn openNetListener(self: *StreamManager, port: u16) !void {
+        self.last_error = null;
+        self.listener = try NetStream.listen(self.io, port);
+        self.stream_status.store(@intFromEnum(StreamStatus.Open), .monotonic);
+        self.up_time = std.Io.Timestamp.now(self.io, .awake);
+        self.reader_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, StreamManager.listenerAcceptorThread, .{self});
+    }
+
     pub fn close(self: *StreamManager) void {
         self.last_error = null;
         self.stream_status.store(@intFromEnum(StreamStatus.Closed), .monotonic);
         if (self.stream) |s| s.close(self.io, self.allocator);
         self.stream = null;
+        if (self.listener) |*l| l.deinit();
+        self.listener = null;
     }
 
     pub fn upTimeSeconds(self: *const StreamManager) f64 {
@@ -93,8 +106,20 @@ pub const StreamManager = struct {
     }
 
     pub fn statusText(self: *const StreamManager, arena: Allocator) ![]const u8 {
+        if (self.listener) |l| {
+            return try std.fmt.allocPrint(arena, "Listening on port {} ...", .{l.port});
+        }
         const s = self.stream orelse return "";
         return s.status(arena);
+    }
+
+    fn listenerAcceptorThread(self: *StreamManager) !void {
+        const accepted = try self.listener.?.accept(self.allocator);
+        self.stream = accepted;
+        self.listener.?.deinit();
+        self.listener = null;
+        self.writer_thread = try std.Thread.spawn(.{ .allocator = self.allocator }, StreamManager.streamWriterThread, .{self});
+        try self.readLoop();
     }
 
     fn streamWriterThread(self: *StreamManager) !void {
@@ -123,7 +148,7 @@ pub const StreamManager = struct {
         }
     }
 
-    fn streamReaderThread(self: *StreamManager) !void {
+    fn readLoop(self: *StreamManager) !void {
         while (self.stream_status.load(.monotonic) == @intFromEnum(StreamStatus.Open)) {
             const stream = self.stream orelse break;
             const bytes_read = stream.read(self.io, &self.read_buffer) catch |e| switch (e) {
@@ -145,5 +170,9 @@ pub const StreamManager = struct {
                 }
             }
         }
+    }
+
+    fn streamReaderThread(self: *StreamManager) !void {
+        try self.readLoop();
     }
 };
