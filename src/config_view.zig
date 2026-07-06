@@ -24,6 +24,17 @@ pub const ConfigView = struct {
     event_queue: *EventQueue,
     allocator: Allocator,
 
+    pub fn helpText() []const []const u8 {
+        return &.{
+            "",
+            " Connection Config:",
+            "   Tab/Shift+Tab  Switch tab",
+            "   j/k            Navigate fields",
+            "   Enter          Open/connect",
+            "   Escape         Close",
+        };
+    }
+
     pub fn widget(self: *ConfigView) vxfw.Widget {
         return self.ser_tcp_udp.widget();
     }

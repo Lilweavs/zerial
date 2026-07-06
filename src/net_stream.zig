@@ -1,6 +1,7 @@
 const std = @import("std");
 const Stream = @import("stream.zig").Stream;
 const Allocator = std.mem.Allocator;
+const builtin = @import("builtin");
 
 const net = std.Io.net;
 
@@ -22,11 +23,15 @@ const NetStream = struct {
 };
 
 pub fn openStream(io: std.Io, allocator: Allocator, host: []const u8, port: u16, mode: NetMode) !Stream {
-    const self = try allocator.create(NetStream);
-    errdefer allocator.destroy(self);
-
     const host_duped = try allocator.dupe(u8, host);
     errdefer allocator.free(host_duped);
+
+    if (builtin.os.tag == .windows and mode == .UDP) {
+        return openUdpConnected(io, allocator, host_duped, port);
+    }
+
+    const self = try allocator.create(NetStream);
+    errdefer allocator.destroy(self);
 
     const socket = switch (mode) {
         .TCP => blk: {
@@ -224,6 +229,111 @@ const UdpBoundStream = struct {
         return try std.fmt.allocPrint(allocator, "UDP Listening on {s}:{}", .{ self.host, self.port });
     }
 };
+
+const UdpConnectedStream = struct {
+    socket: net.Socket,
+    io: std.Io,
+    host: []const u8,
+    port: u16,
+    remote_address: net.IpAddress,
+    rx_bytes: u64 = 0,
+    rx_prev: u64 = 0,
+    bw_time: i64 = 0,
+    bw_rate: u64 = 0,
+
+    fn read(ctx: *anyopaque, io: std.Io, buf: []u8) anyerror!usize {
+        const self: *UdpConnectedStream = @ptrCast(@alignCast(ctx));
+        const msg = try self.socket.receive(io, buf);
+        self.rx_bytes += msg.data.len;
+        return msg.data.len;
+    }
+
+    fn write(ctx: *anyopaque, io: std.Io, buf: []const u8) anyerror!usize {
+        const self: *UdpConnectedStream = @ptrCast(@alignCast(ctx));
+        if (buf.len == 0) return 0;
+        try self.socket.send(io, &self.remote_address, buf);
+        return buf.len;
+    }
+
+    fn close(ctx: *anyopaque, io: std.Io, allocator: Allocator) void {
+        const self: *UdpConnectedStream = @ptrCast(@alignCast(ctx));
+        self.socket.close(io);
+        allocator.free(self.host);
+        allocator.destroy(self);
+    }
+
+    fn status(ctx: *anyopaque, allocator: Allocator) anyerror![]const u8 {
+        const self: *UdpConnectedStream = @ptrCast(@alignCast(ctx));
+        const now = std.Io.Timestamp.now(self.io, .awake).toMilliseconds();
+        const elapsed = now - self.bw_time;
+        if (elapsed >= 1000) {
+            self.bw_rate = self.rx_bytes - self.rx_prev;
+            self.rx_prev = self.rx_bytes;
+            self.bw_time = now;
+        }
+        const bw_str = if (self.bw_rate >= 1_000_000)
+            try std.fmt.allocPrint(allocator, "{d:.1}MB/s", .{@as(f64, @floatFromInt(self.bw_rate)) / 1_000_000})
+        else if (self.bw_rate >= 1_000)
+            try std.fmt.allocPrint(allocator, "{d:.1}KB/s", .{@as(f64, @floatFromInt(self.bw_rate)) / 1_000})
+        else
+            try std.fmt.allocPrint(allocator, "{}B/s", .{self.bw_rate});
+        defer allocator.free(bw_str);
+
+        return try std.fmt.allocPrint(allocator, "UDP Connected: {s}:{d}  BW: {s}", .{
+            self.host, self.port, bw_str,
+        });
+    }
+};
+
+fn openUdpConnected(io: std.Io, allocator: Allocator, host_duped: []const u8, port: u16) !Stream {
+    const resolved_addr = addr: {
+        if (net.IpAddress.parseLiteral(host_duped)) |addr| {
+            break :addr addr;
+        } else |_| {
+            const host_name = try net.HostName.init(host_duped);
+            var lookup_buf: [32]net.HostName.LookupResult = undefined;
+            var queue: std.Io.Queue(net.HostName.LookupResult) = .init(&lookup_buf);
+            try host_name.lookup(io, &queue, .{ .port = port });
+            const result = queue.getOne(io) catch |e| switch (e) {
+                error.Closed => return error.UnknownHostName,
+                else => |err| return err,
+            };
+            break :addr switch (result) {
+                .address => |a| a,
+                else => return error.UnknownHostName,
+            };
+        }
+    };
+    var addr_mut = resolved_addr;
+    addr_mut.setPort(port);
+
+    const any_addr_str = switch (addr_mut) {
+        .ip4 => "0.0.0.0",
+        .ip6 => "::",
+    };
+    var any_addr = try net.IpAddress.parseLiteral(any_addr_str);
+    any_addr.setPort(0);
+    const socket = try any_addr.bind(io, .{ .mode = .dgram, .protocol = .udp });
+    errdefer socket.close(io);
+
+    const self = try allocator.create(UdpConnectedStream);
+    errdefer allocator.destroy(self);
+
+    self.* = .{
+        .socket = socket,
+        .io = io,
+        .host = host_duped,
+        .port = port,
+        .remote_address = addr_mut,
+    };
+    return .{
+        .ctx = self,
+        .readFn = UdpConnectedStream.read,
+        .writeFn = UdpConnectedStream.write,
+        .closeFn = UdpConnectedStream.close,
+        .statusFn = UdpConnectedStream.status,
+    };
+}
 
 pub fn bind(io: std.Io, allocator: Allocator, host: []const u8, port: u16) !Stream {
     // TODO fix this workaround when std library fixes this

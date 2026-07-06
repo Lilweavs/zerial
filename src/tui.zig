@@ -22,6 +22,7 @@ const StreamView = @import("serial_monitor.zig").StreamView;
 const SendView = @import("send_view.zig").SendView;
 const SaveView = @import("save_view.zig").SaveView;
 const LoadView = @import("load_view.zig").LoadView;
+const HelpView = @import("help_view.zig").HelpView;
 
 const TuiEvent = enum {
     ScrollUp,
@@ -122,13 +123,34 @@ pub const Tui = struct {
     stream_manager: StreamManager,
 
     state: ZerialState = .Home,
+    show_help: bool = false,
+
+    help_view: HelpView = .{},
 
     pub fn widget(self: *Tui) vxfw.Widget {
         return .{
             .userdata = self,
+            .captureHandler = Tui.typeErasedCaptureHandler,
             .eventHandler = Tui.typeErasedEventHandler,
             .drawFn = Tui.typeErasedDrawFn,
         };
+    }
+
+    fn typeErasedCaptureHandler(ptr: *anyopaque, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
+        const self: *Tui = @ptrCast(@alignCast(ptr));
+        return self.captureEvent(ctx, event);
+    }
+
+    fn captureEvent(self: *Tui, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
+        switch (event) {
+            .key_press => |key| {
+                if (key.matches('/', .{ .ctrl = true })) {
+                    self.show_help = !self.show_help;
+                    return ctx.consumeAndRedraw();
+                }
+            },
+            else => {},
+        }
     }
 
     pub fn init(self: *Tui, io: std.Io, allocator: Allocator, appdata_dir: []const u8, serial_opts: Serial.Options) !void {
@@ -448,6 +470,38 @@ pub const Tui = struct {
         }
     }
 
+    fn getHelpLines(self: *Tui, arena: std.mem.Allocator) ![]const []const u8 {
+        const global: []const []const u8 = &.{
+            " Global:",
+            "   Ctrl+/       Help",
+            "   Ctrl+C       Quit",
+            "   :            Send data",
+            "   o            Connection config",
+            "   Ctrl+S       Save history",
+            "   Ctrl+O       Load history",
+        };
+
+        const view: []const []const u8 = switch (self.state) {
+            .Home => StreamView.helpText(),
+            .SendView => SendView.helpText(),
+            .SerTcpUdpOverlay => ConfigView.helpText(),
+            .SaveOverlay => SaveView.helpText(),
+            .LoadOverlay => LoadView.helpText(),
+        };
+
+        const footer: []const []const u8 = &.{
+            "",
+            " Ctrl+/ or Escape to close",
+        };
+
+        const total = global.len + view.len + footer.len;
+        const result = try arena.alloc([]const u8, total);
+        @memcpy(result[0..global.len], global);
+        @memcpy(result[global.len..][0..view.len], view);
+        @memcpy(result[global.len + view.len..], footer);
+        return result;
+    }
+
     pub fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) Allocator.Error!vxfw.Surface {
         const self: *Tui = @ptrCast(@alignCast(ptr));
 
@@ -514,6 +568,18 @@ pub const Tui = struct {
             }).widget().draw(ctx.withConstraints(ctx.min, .{ .width = ctx.max.width.?, .height = max.height -| @as(u16, @intCast(row)) })),
         });
 
+        if (self.show_help) {
+            self.help_view.lines = try self.getHelpLines(ctx.arena);
+            const overlay = try (vxfw.Border{
+                .child = self.help_view.widget(),
+                .labels = &.{
+                    vxfw.Border.BorderLabel{ .text = " Help ", .alignment = .top_center },
+                },
+            }).widget().draw(ctx.withConstraints(ctx.min, .{ .width = ctx.max.width.? / 2 }));
+            const origin_row = (ctx.max.height.? -| overlay.size.height) -| 1;
+            const origin_col = (ctx.max.width.? -| overlay.size.width) -| 1;
+            try children.append(ctx.arena, .{ .origin = .{ .row = origin_row, .col = origin_col }, .surface = overlay });
+        }
         if (self.state == .SerTcpUdpOverlay) {
             const overlay = try self.config_view.widget().draw(ctx.withConstraints(.{ .width = 15, .height = 3 }, .{ .width = ctx.max.width.? / 2 }));
             const origin_row = (ctx.max.height.? -| overlay.size.height) / 2;

@@ -44,6 +44,25 @@ pub const SendView = struct {
         return std.mem.eql(u8, s, "\r\n") or std.mem.eql(u8, s, "\r") or std.mem.eql(u8, s, "\n");
     }
 
+    pub fn helpText() []const []const u8 {
+        return &.{
+            "",
+            " Send Bar:",
+            "   Enter        Send data",
+            "   Shift+Enter  Newline",
+            "   Ctrl+H       Toggle history",
+            "   Ctrl+L       Cycle delimiter",
+            "   Ctrl+Backsp  Clear input",
+            "   Escape       Close",
+            "",
+            " History (when open):",
+            "   Ctrl+J/K     Navigate",
+            "   Ctrl+E       Insert selection",
+            "   Ctrl+D       Delete item",
+            "   Ctrl+Enter   Send selected",
+        };
+    }
+
     pub fn deinit(self: *SendView, allocator: Allocator) void {
         self.input.deinit();
         self.drop_down.list = &.{};

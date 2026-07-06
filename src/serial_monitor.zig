@@ -31,6 +31,17 @@ pub const StreamView = struct {
         Bot,
     };
 
+    pub fn helpText() []const []const u8 {
+        return &.{
+            "",
+            " StreamView:",
+            "   j/k          Scroll up/down",
+            "   Shift+J/K    Jump 5 lines",
+            "   v            Toggle visual mode",
+            "   y            Copy",
+        };
+    }
+
     pub fn widget(self: *StreamView) vxfw.Widget {
         return .{
             .userdata = self,

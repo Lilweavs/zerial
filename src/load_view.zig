@@ -19,6 +19,16 @@ pub const LoadView = struct {
     drop_down_list_ptr: *[][]const u8,
     current_file_ptr: *?[]const u8 = undefined,
 
+    pub fn helpText() []const []const u8 {
+        return &.{
+            "",
+            " Load History:",
+            "   j/k           Navigate list",
+            "   Enter         Load selected",
+            "   Escape        Close",
+        };
+    }
+
     pub fn deinit(self: *LoadView, allocator: Allocator) void {
         self.file_dropdown.list = &.{};
         self.file_dropdown.deinit(allocator);

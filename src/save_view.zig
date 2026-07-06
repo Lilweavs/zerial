@@ -22,6 +22,17 @@ pub const SaveView = struct {
     appdata_dir: []const u8 = &.{},
     history_list: *std.ArrayList([]const u8),
 
+    pub fn helpText() []const []const u8 {
+        return &.{
+            "",
+            " Save History:",
+            "   Tab/Right     Switch button",
+            "   Left          Focus Save",
+            "   Enter         Confirm",
+            "   Escape        Close",
+        };
+    }
+
     pub fn deinit(self: *SaveView, allocator: Allocator) void {
         self.input.deinit();
         if (self.current_file) |f| allocator.free(f);
