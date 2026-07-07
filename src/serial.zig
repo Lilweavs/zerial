@@ -5,6 +5,20 @@ const File = std.Io.File;
 const Serial = @This();
 const Stream = @import("stream.zig").Stream;
 const Allocator = std.mem.Allocator;
+
+const win = if (builtin.os.tag == .windows) struct {
+    const COMMTIMEOUTS = extern struct {
+        ReadIntervalTimeout: u32,
+        ReadTotalTimeoutMultiplier: u32,
+        ReadTotalTimeoutConstant: u32,
+        WriteTotalTimeoutMultiplier: u32,
+        WriteTotalTimeoutConstant: u32,
+    };
+    extern "kernel32" fn SetCommTimeouts(
+        hFile: std.os.windows.HANDLE,
+        lpCommTimeouts: *COMMTIMEOUTS,
+    ) callconv(.winapi) std.os.windows.BOOL;
+} else struct {};
 port: File,
 io: std.Io,
 rx_bytes: u64 = 0,
@@ -37,25 +51,15 @@ pub fn openStream(io: std.Io, allocator: Allocator, opts: Options) !Stream {
     try utils.configureSerialPort(serial.port, .{ .baud_rate = @intFromEnum(opts.baudrate), .parity = opts.parity, .stop_bits = opts.stopbits, .word_size = opts.wordsize });
 
     if (builtin.os.tag == .windows) {
-        const COMMTIMEOUTS = extern struct {
-            ReadIntervalTimeout: u32,
-            ReadTotalTimeoutMultiplier: u32,
-            ReadTotalTimeoutConstant: u32,
-            WriteTotalTimeoutMultiplier: u32,
-            WriteTotalTimeoutConstant: u32,
-        };
-        const SetCommTimeouts = @extern(*const fn (std.os.windows.HANDLE, *COMMTIMEOUTS) callconv(.winapi) i32, .{
-            .name = "SetCommTimeouts",
-            .library_name = "kernel32",
-        });
-        var timeouts: COMMTIMEOUTS = .{
-            .ReadIntervalTimeout = 100,
+        var timeouts: win.COMMTIMEOUTS = .{
+            .ReadIntervalTimeout = 0,
             .ReadTotalTimeoutMultiplier = 0,
-            .ReadTotalTimeoutConstant = 100,
+            .ReadTotalTimeoutConstant = 0,
             .WriteTotalTimeoutMultiplier = 0,
             .WriteTotalTimeoutConstant = 0,
         };
-        _ = SetCommTimeouts(serial.port.handle, &timeouts);
+        if (win.SetCommTimeouts(serial.port.handle, &timeouts) == std.os.windows.BOOL.FALSE)
+            return error.WindowsError;
     }
 
     const new_port = try allocator.dupe(u8, opts.port);
