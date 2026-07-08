@@ -146,7 +146,7 @@ pub const StreamManager = struct {
                     if (self.stream_status.load(.monotonic) != @intFromEnum(StreamStatus.Open)) break;
                     const stream = self.stream orelse break;
                     _ = stream.write(self.io, data) catch |e| switch (e) {
-                        error.InputOutput, error.BrokenPipe, error.ConnectionResetByPeer, error.Unexpected, error.SystemResources, error.EndOfStream => {
+                        error.InputOutput, error.BrokenPipe, error.ConnectionResetByPeer, error.Unexpected, error.SystemResources, error.EndOfStream, error.NotOpenForWriting => {
                             self.stream_status.store(@intFromEnum(StreamStatus.Closed), .monotonic);
                             break;
                         },
@@ -174,7 +174,7 @@ pub const StreamManager = struct {
         while (self.stream_status.load(.monotonic) == @intFromEnum(StreamStatus.Open)) {
             const stream = self.stream orelse break;
             const bytes_read = stream.read(self.io, &self.read_buffer) catch |e| switch (e) {
-                error.InputOutput, error.BrokenPipe, error.ConnectionResetByPeer, error.Unexpected, error.SystemResources, error.EndOfStream => {
+                error.InputOutput, error.BrokenPipe, error.ConnectionResetByPeer, error.Unexpected, error.SystemResources, error.EndOfStream, error.NotOpenForReading => {
                     if (self.stream) |s| s.close(self.io, self.allocator);
                     self.stream = null;
                     self.stream_status.store(@intFromEnum(StreamStatus.Closed), .monotonic);
