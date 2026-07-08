@@ -19,6 +19,14 @@ pub const RecordStore = struct {
         };
     }
 
+    pub fn clear(self: *RecordStore, allocator: Allocator) void {
+        while (self.records.popOrNull()) |r| {
+            allocator.free(r.text);
+        }
+        self.records.clearRetainingCapacity();
+        self.scroll_offset = 0;
+    }
+
     pub fn deinit(self: *RecordStore, allocator: Allocator) void {
         while (self.records.popOrNull()) |r| {
             allocator.free(r.text);

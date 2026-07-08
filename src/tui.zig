@@ -31,6 +31,7 @@ const TuiEvent = enum {
     PageDown,
     StreamOpenClose,
     Home,
+    ClearScreen,
 };
 
 pub const EventQueue = vaxis.Queue(TuiEvent, 8);
@@ -392,6 +393,7 @@ pub const Tui = struct {
                             self.state = .Home;
                             try ctx.requestFocus(self.widget());
                         },
+                        .ClearScreen => self.record_store.clear(self.allocator),
                     }
                 }
 
@@ -454,6 +456,10 @@ pub const Tui = struct {
                             try ctx.requestFocus(self.widget());
                             try self.config_view.enumerateSerialPorts(self.io, self.allocator);
                         }
+                        if (key.matches('l', .{ .ctrl = true })) {
+                            try self.event_queue.push(.ClearScreen);
+                            return ctx.consumeAndRedraw();
+                        }
                     },
                 }
                 _ = try self.stream_view.handleEvent(ctx, event);
@@ -479,6 +485,7 @@ pub const Tui = struct {
             "   o            Connection config",
             "   Ctrl+S       Save history",
             "   Ctrl+O       Load history",
+            "   Ctrl+L       Clear",
         };
 
         const view: []const []const u8 = switch (self.state) {
