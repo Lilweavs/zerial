@@ -52,7 +52,7 @@ pub fn openStream(io: std.Io, allocator: Allocator, opts: Options) !Stream {
 
     if (builtin.os.tag == .windows) {
         var timeouts: win.COMMTIMEOUTS = .{
-            .ReadIntervalTimeout = 0,
+            .ReadIntervalTimeout = std.math.maxInt(u32),
             .ReadTotalTimeoutMultiplier = 0,
             .ReadTotalTimeoutConstant = 0,
             .WriteTotalTimeoutMultiplier = 0,
@@ -79,9 +79,14 @@ pub fn openStream(io: std.Io, allocator: Allocator, opts: Options) !Stream {
 fn read(ctx: *anyopaque, io: std.Io, buf: []u8) !usize {
     const self: *Self = @ptrCast(@alignCast(ctx));
     const list: []const []u8 = &.{buf};
-    const n = try self.port.readStreaming(io, list);
-    self.rx_bytes += n;
-    return n;
+    while (true) {
+        const n = try self.port.readStreaming(io, list);
+        if (n > 0 or builtin.os.tag != .windows) {
+            self.rx_bytes += n;
+            return n;
+        }
+        try io.sleep(.fromMilliseconds(1), .awake);
+    }
 }
 
 fn write(ctx: *anyopaque, io: std.Io, buf: []const u8) !usize {
